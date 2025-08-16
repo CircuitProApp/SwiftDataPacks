@@ -7,10 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		C7A322422E509DC70002FD0E /* SwiftDataPacks in Frameworks */ = {isa = PBXBuildFile; productRef = C7A322412E509DC70002FD0E /* SwiftDataPacks */; };
+		C77B0C1C2E50B59200A0227D /* SwiftDataPacks in Frameworks */ = {isa = PBXBuildFile; productRef = C77B0C1B2E50B59200A0227D /* SwiftDataPacks */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		C77B0C1A2E50B1B200A0227D /* SwiftDataPacks */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = SwiftDataPacks; path = ..; sourceTree = "<group>"; };
 		C7A322272E509D0E0002FD0E /* SwiftDataPacksExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftDataPacksExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -27,17 +28,26 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C7A322422E509DC70002FD0E /* SwiftDataPacks in Frameworks */,
+				C77B0C1C2E50B59200A0227D /* SwiftDataPacks in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		C77B0C172E50B19300A0227D /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				C77B0C1A2E50B1B200A0227D /* SwiftDataPacks */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		C7A3221E2E509D0E0002FD0E = {
 			isa = PBXGroup;
 			children = (
 				C7A322292E509D0E0002FD0E /* SwiftDataPacksExample */,
+				C77B0C172E50B19300A0227D /* Frameworks */,
 				C7A322282E509D0E0002FD0E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -70,7 +80,7 @@
 			);
 			name = SwiftDataPacksExample;
 			packageProductDependencies = (
-				C7A322412E509DC70002FD0E /* SwiftDataPacks */,
+				C77B0C1B2E50B59200A0227D /* SwiftDataPacks */,
 			);
 			productName = SwiftDataPacksExample;
 			productReference = C7A322272E509D0E0002FD0E /* SwiftDataPacksExample.app */;
@@ -101,7 +111,6 @@
 			mainGroup = C7A3221E2E509D0E0002FD0E;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				C7A322402E509DC70002FD0E /* XCLocalSwiftPackageReference "../../SwiftDataPacks" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C7A322282E509D0E0002FD0E /* Products */;
@@ -345,15 +354,8 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		C7A322402E509DC70002FD0E /* XCLocalSwiftPackageReference "../../SwiftDataPacks" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../SwiftDataPacks;
-		};
-/* End XCLocalSwiftPackageReference section */
-
 /* Begin XCSwiftPackageProductDependency section */
-		C7A322412E509DC70002FD0E /* SwiftDataPacks */ = {
+		C77B0C1B2E50B59200A0227D /* SwiftDataPacks */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SwiftDataPacks;
 		};

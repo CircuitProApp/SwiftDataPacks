@@ -4,7 +4,7 @@ import SwiftData
 import SwiftDataPacks
 
 private struct PackSelection: Identifiable, Hashable {
-    let id: String
+    let id: UUID
 }
 
 struct PacksView: View {
@@ -25,35 +25,35 @@ struct PacksView: View {
             Text("Installed Packs").font(.headline)
 
             List {
-                ForEach(hub.installedPacks, id: \.id) { pack in
-                    HStack {
-                        Text(pack.title)
-                        Spacer()
-                        Text(pack.fileURL.lastPathComponent)
-                            .foregroundStyle(.secondary)
-
-                        Button("Export…") {
-                            do {
-                                let (doc, name) = try hub.packDirectoryDocument(id: pack.id)
-                                exportDirDoc = doc
-                                exportSuggestedName = name
-                                exporting = true
-                            } catch {
-                                print("Export prep failed: \(error)")
-                            }
-                        }
-                        .buttonStyle(.borderless)
-
-                        Button("Remove") {
-                            Task { await hub.removePack(id: pack.id) }
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        selection = .init(id: pack.id)
-                    }
-                }
+//                ForEach(hub.installedPacks, id: \.id) { pack in
+//                    HStack {
+//                        Text(pack.title)
+//                        Spacer()
+//                        Text(pack.fileURL.lastPathComponent)
+//                            .foregroundStyle(.secondary)
+//
+//                        Button("Export…") {
+//                            do {
+////                                let (doc, name) = try hub.packDirectoryDocument(id: pack.id)
+////                                exportDirDoc = doc
+////                                exportSuggestedName = name
+////                                exporting = true
+//                            } catch {
+//                                print("Export prep failed: \(error)")
+//                            }
+//                        }
+//                        .buttonStyle(.borderless)
+//
+//                        Button("Remove") {
+//                            Task { await hub.removePack(id: pack.id) }
+//                        }
+//                        .buttonStyle(.borderless)
+//                    }
+//                    .contentShape(Rectangle())
+//                    .onTapGesture {
+//                        selection = .init(id: pack.id)
+//                    }
+//                }
             }
             // A simple way to see that the main container is updating.
             .onAppear {
@@ -67,10 +67,10 @@ struct PacksView: View {
                         allowedContentTypes: [UTType.folder, UTType.package, UTType.data],
                         allowsMultipleSelection: false
                     ) { result in
-                        if case .success(let urls) = result, let url = urls.first {
-                            let id = "\(hub.config.appBundleID).pack.\(UUID().uuidString)"
-                            hub.installPack(from: url, id: id, title: url.deletingPathExtension().lastPathComponent)
-                        }
+//                        if case .success(let urls) = result, let url = urls.first {
+//                            let id = "\(hub.config.appBundleID).pack.\(UUID().uuidString)"
+//                            hub.installPack(from: url, id: id, title: url.deletingPathExtension().lastPathComponent)
+//                        }
                     }
 
                 // --- REPLACEMENT: Use a Menu for creating themed packs ---

@@ -8,24 +8,47 @@
 import UniformTypeIdentifiers
 import SwiftUI
 
+/// A `FileDocument` that represents a SwiftData Pack as a folder on disk.
+///
+/// This document is used for exporting. It takes a `Pack` metadata object and its
+/// database files, and bundles them into a directory containing a `manifest.json`.
 public struct PackDirectoryDocument: FileDocument {
-    public static var readableContentTypes: [UTType] { [UTType.folder, UTType.package] }
-    public static var writableContentTypes: [UTType] { [UTType.folder] }
+    
+    // MODIFIED: We now explicitly work with folders for both import and export.
+    public static var readableContentTypes: [UTType] { [.folder] }
+    public static var writableContentTypes: [UTType] { [.folder] }
 
-    let files: [String: Data] // filename -> bytes
+    /// The core metadata for the pack, which will be saved as `manifest.json`.
+    let manifest: Pack
+    
+    /// The raw data for the database files (e.g., "Database.store", "Database.store-wal").
+    let databaseFiles: [String: Data]
 
-    init(files: [String: Data]) { self.files = files }
-
-    public init(configuration: ReadConfiguration) throws {
-        // We don’t import via this document; leave empty
-        self.files = [:]
+    /// Creates a document ready for exporting.
+    public init(manifest: Pack, databaseFiles: [String: Data]) {
+        self.manifest = manifest
+        self.databaseFiles = databaseFiles
     }
 
+    /// This initializer is not used, as importing is handled directly by the `SwiftDataPackManager`.
+    public init(configuration: ReadConfiguration) throws {
+        throw CocoaError(.fileReadUnsupportedScheme)
+    }
+
+    /// Generates the file structure for the pack folder.
     public func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         var children: [String: FileWrapper] = [:]
-        for (name, data) in files {
+
+        // 1. Encode the type-safe `Pack` manifest to JSON data.
+        let manifestData = try JSONEncoder().encode(manifest)
+        children["manifest.json"] = FileWrapper(regularFileWithContents: manifestData)
+        
+        // 2. Add all the database files to the directory.
+        for (name, data) in databaseFiles {
             children[name] = FileWrapper(regularFileWithContents: data)
         }
+
+        // 3. Return a directory FileWrapper containing the manifest and database files.
         return FileWrapper(directoryWithFileWrappers: children)
     }
 }

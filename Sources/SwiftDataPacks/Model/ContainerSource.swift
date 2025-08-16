@@ -13,14 +13,15 @@ public enum ContainerSource: Hashable, Identifiable {
     case mainStore
     
     /// Represents a specific, installed data pack, identified by its unique ID.
-    case pack(id: String)
+    case pack(id: UUID)
 
+    /// Provides a stable, string-based ID for `Identifiable` conformance (e.g., for use in SwiftUI lists).
     public var id: String {
         switch self {
         case .mainStore:
             return "mainStore"
         case .pack(let id):
-            return "pack-\(id)"
+            return "pack-\(id.uuidString)"
         }
     }
 }

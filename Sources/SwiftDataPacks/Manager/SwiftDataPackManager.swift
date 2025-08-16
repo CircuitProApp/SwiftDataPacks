@@ -101,7 +101,7 @@ public final class SwiftDataPackManager {
             }
         } catch {
             print("reloadContainer failed: \(String(describing: error)) — falling back to a single default store.")
-            let fallbackURL = Self.primaryStoreURL(for: "Default", rootURL: rootURL)
+            let fallbackURL = Self.primaryStoreURL(for: "default", rootURL: rootURL)
             let fallbackConfig = ModelConfiguration("default", schema: schema, url: fallbackURL, allowsSave: true)
             container = try! ModelContainer(for: schema, configurations: [fallbackConfig])
         }

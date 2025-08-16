@@ -23,7 +23,7 @@ public struct Pack: Codable, Hashable, Sendable {
     /// Best to keep this consistent, but having it in the manifest allows for future flexibility.
     public let databaseFileName: String
 
-    public init(id: UUID, title: String, version: Int, databaseFileName: String = "Database.store") {
+    public init(id: UUID, title: String, version: Int, databaseFileName: String = "database.store") {
         self.id = id
         self.title = title
         self.version = version

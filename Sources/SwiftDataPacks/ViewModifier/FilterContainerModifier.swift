@@ -13,20 +13,15 @@ public struct FilterContainerModifier: ViewModifier {
     
     let sources: [ContainerSource]
     
-    // By moving the logic into a computed property, we resolve the container
-    // or the error *before* the body's ViewBuilder is invoked.
     private var containerResult: Result<ModelContainer, Error>? {
         let configurations = sources.compactMap { manager.configuration(for: $0) }
         
-        // If there are no valid configurations, return nil to represent this state.
         guard !configurations.isEmpty else { return nil }
 
         do {
-            // Try to create the container and return a success result.
             let container = try ModelContainer(for: manager.schema, configurations: configurations)
             return .success(container)
         } catch {
-            // If it fails, return a failure result.
             return .failure(error)
         }
     }

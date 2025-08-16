@@ -16,7 +16,7 @@ public struct SwiftDataPackContainerModifier: ViewModifier {
 }
 
 public extension View {
-    public func packContainer(for models: [any PersistentModel.Type],
+    func packContainer(for models: [any PersistentModel.Type],
                               configuration: SwiftDataPackManagerConfiguration = .init()) -> some View {
         self.modifier(SwiftDataPackContainerModifier(models: models, configuration: configuration))
     }

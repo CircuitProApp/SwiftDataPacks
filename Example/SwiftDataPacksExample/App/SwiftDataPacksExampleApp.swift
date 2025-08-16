@@ -15,7 +15,6 @@ struct SwiftDataPacksExampleApp: App {
             ContentView()
                 .frame(minWidth: 600, minHeight: 400)
                 .packContainer(for: [Component.self, Footprint.self])
-            
         }
     }
 }

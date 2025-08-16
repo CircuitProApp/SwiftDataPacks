@@ -14,14 +14,13 @@ import SwiftUI
 /// database files, and bundles them into a directory containing a `manifest.json`.
 public struct PackDirectoryDocument: FileDocument {
     
-    // MODIFIED: We now explicitly work with folders for both import and export.
     public static var readableContentTypes: [UTType] { [.folder] }
     public static var writableContentTypes: [UTType] { [.folder] }
 
     /// The core metadata for the pack, which will be saved as `manifest.json`.
     let manifest: Pack
     
-    /// The raw data for the database files (e.g., "Database.store", "Database.store-wal").
+    /// The raw data for the database files (e.g., "database.store", "database.store-wal").
     let databaseFiles: [String: Data]
 
     /// Creates a document ready for exporting.

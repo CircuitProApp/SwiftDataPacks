@@ -14,17 +14,14 @@ struct PacksView: View {
 
     // State for showing the contents of a single pack in a sheet
     @State private var selectedPackID: UUID?
-    
-    // Verifying that the main container is working.
-    @Query private var allComponents: [Component]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        SectionView {
             Text("Installed Packs")
-                .font(.headline)
-                .padding([.horizontal, .top])
-                .padding(.bottom, 8)
-
+        } content: {
+            
+     
+            
             // The main list of installed packs.
             List(selection: $selectedPackID) {
                 // If there are no packs, show a helpful message.
@@ -46,12 +43,9 @@ struct PacksView: View {
                     }
                 }
             }
-            .onAppear {
-                // Useful for debugging container updates.
-                print("PacksView appeared with \(allComponents.count) total components.")
-            }
+            
 
-            // Footer with action buttons
+        } footer: {
             HStack(spacing: 12) {
                 Button("Install Pack…") { isPickingFile = true }
                 
@@ -68,9 +62,9 @@ struct PacksView: View {
                 
                 Spacer()
             }
-            .padding()
-            .background(.bar)
+         
         }
+  
         .fileImporter(
             isPresented: $isPickingFile,
             allowedContentTypes: [.folder],
@@ -96,6 +90,7 @@ struct PacksView: View {
                 .filterContainer(for: .pack(id: packID))
             
         }
+        
     }
     
     /// A view builder function to create a row for a single pack.

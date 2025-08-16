@@ -6,12 +6,26 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct ContentView: View {
+    
+    @State private var showEditable: Bool = false
+
     var body: some View {
-        PacksView()
+        HStack(spacing: 0) {
+            AllItemsView(showEditable: $showEditable)
+                .if(showEditable) {
+                    $0.filterContainer(for: .mainStore)
+                }
+             
+            Divider()
+            PacksView()
+        }
     }
 }
+
+
 
 #Preview {
     ContentView()

@@ -15,6 +15,11 @@ struct AllItemsView: View {
     @UserContext private var userContext
     @State private var newComponentName: String = ""
     
+    // State for the file exporter
+    @State private var isExporterPresented = false
+    @State private var documentToExport: PackDirectoryDocument?
+    @State private var suggestedExportName: String = ""
+    
     @Binding var showEditable: Bool
     
     var body: some View {
@@ -25,7 +30,7 @@ struct AllItemsView: View {
                 Button {
                     showEditable.toggle()
                 } label: {
-                    Text("Show Editable")
+                    Text(showEditable ? "Show All" : "Show User")
                 }
                 
             }
@@ -37,17 +42,52 @@ struct AllItemsView: View {
             HStack(spacing: 12) {
                 TextField("New Component Name", text: $newComponentName)
                     .textFieldStyle(.roundedBorder)
-                Button("Add New Component") {
+                Button("Add") {
                     addNewComponent()
                 }
                 Spacer()
+                Button("Export User as Pack") {
+                    exportUserStore()
+                }
+            }
+        }
+        .fileExporter(
+            isPresented: $isExporterPresented,
+            document: documentToExport,
+            contentType: .folder,
+            defaultFilename: suggestedExportName
+        ) { result in
+            switch result {
+            case .success(let url):
+                print("Saved to \(url)")
+            case .failure(let error):
+                print("Save failed: \(error.localizedDescription)")
             }
         }
     }
 
     private func addNewComponent() {
+        guard !newComponentName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         let newComponent = Component(name: newComponentName)
         userContext.insert(newComponent)
-      
+        newComponentName = ""
+    }
+    
+    private func exportUserStore() {
+        do {
+            // For this example, we'll use a timestamped name.
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd HH.mm"
+            let packTitle = "User Backup \(dateFormatter.string(from: .now))"
+            
+            let (doc, name) = try manager.exportMainStoreAsPack(title: packTitle, version: 1)
+            
+            self.documentToExport = doc
+            self.suggestedExportName = name
+            self.isExporterPresented = true
+            
+        } catch {
+            print("Export failed: \(error.localizedDescription)")
+        }
     }
 }

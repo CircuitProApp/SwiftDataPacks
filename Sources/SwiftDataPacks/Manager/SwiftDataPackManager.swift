@@ -138,7 +138,10 @@ public final class SwiftDataPackManager {
             try manifestData.write(to: tempInstallDir.appendingPathComponent("manifest.json"), options: .atomic)
             try storage.validateStore(at: tempStoreURL)
             
-            let finalDestDir = try storage.createUniquePackDirectory(for: metadata)
+            // Get a unique destination URL without creating the directory.
+            let finalDestDir = try storage.getUniquePackDirectoryURL(for: metadata)
+            
+            // Rename the fully-formed temporary directory to its final destination.
             try FileManager.default.moveItem(at: tempInstallDir, to: finalDestDir)
             
             let newPack = InstalledPack(metadata: metadata, directoryURL: finalDestDir, allowsSave: allowsSave)
@@ -247,7 +250,7 @@ public final class SwiftDataPackManager {
         guard let pack = registry.packs.first(where: { $0.id == id }) else {
             throw PackManagerError.buildError("No pack with id \(id.uuidString)")
         }
-        return try storage.createExportDocument(for: pack)
+        return try storage.createExportDocument(from: pack.storeURL, metadata: pack.metadata)
     }
 
 #if DEBUG

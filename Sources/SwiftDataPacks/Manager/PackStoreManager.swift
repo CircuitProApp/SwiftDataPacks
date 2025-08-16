@@ -41,11 +41,17 @@ struct PackStorageManager {
 
     /// Creates a new, empty, and uniquely named directory for a pack.
     func createUniquePackDirectory(for pack: Pack) throws -> URL {
+        let url = try getUniquePackDirectoryURL(for: pack)
+        try fm.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// Generates a unique URL for a new pack directory without creating it.
+    func getUniquePackDirectoryURL(for pack: Pack) throws -> URL {
         let baseName = sanitizeFilename(pack.title)
         var candidate = packsDirectoryURL.appendingPathComponent("\(baseName).pack", isDirectory: true)
 
         if !fm.fileExists(atPath: candidate.path) {
-            try fm.createDirectory(at: candidate, withIntermediateDirectories: true)
             return candidate
         }
 
@@ -57,7 +63,6 @@ struct PackStorageManager {
             candidate = packsDirectoryURL.appendingPathComponent("\(baseName) (\(i)).pack", isDirectory: true)
             i += 1
         }
-        try fm.createDirectory(at: candidate, withIntermediateDirectories: true)
         return candidate
     }
     

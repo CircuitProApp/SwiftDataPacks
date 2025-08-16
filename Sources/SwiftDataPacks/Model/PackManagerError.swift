@@ -12,6 +12,7 @@ public enum PackManagerError: LocalizedError {
     case initializationFailed(reason: String)
     case installationFailed(reason: String)
     case buildError(String)
+    case idCollisionDetected
 
     public var errorDescription: String? {
         switch self {
@@ -21,6 +22,8 @@ public enum PackManagerError: LocalizedError {
             return "Pack Installation Failed: \(reason)"
         case .buildError(let reason):
             return "Build Failed: \(reason)"
+        case .idCollisionDetected:
+            return "Pack Installation Aborted: One or more items in the pack have the same ID as items in the user's library."
         }
     }
 }

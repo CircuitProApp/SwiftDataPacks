@@ -35,8 +35,22 @@ struct AllItemsView: View {
                 
             }
         } content: {
-            List(allComponents, id: \.id) { component in
-                Text(component.name)
+            List {
+                if allComponents.isEmpty {
+                    HStack {
+                        Spacer()
+                        ContentUnavailableView(
+                            "No Items To Show",
+                            systemImage: "tray",
+                            description: Text("Create component below or install/create a pack.")
+                        )
+                        Spacer()
+                    }
+                } else {
+                    ForEach(allComponents, id: \.id) { component in
+                        Text(component.name)
+                    }
+                }
             }
         } footer: {
             HStack(spacing: 12) {
@@ -48,6 +62,9 @@ struct AllItemsView: View {
                 Spacer()
                 Button("Export User as Pack") {
                     exportUserStore()
+                }
+                Button("Delete User") {
+                    Task { await manager.DEBUG_deleteUserContainer() }
                 }
             }
         }

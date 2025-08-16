@@ -133,6 +133,14 @@ struct PackStorageManager {
             try fm.copyItem(at: srcShm, to: destShm)
         }
     }
+    
+    func removeSQLiteSet(at main: URL) {
+        let wal = URL(fileURLWithPath: main.path + "-wal")
+        let shm = URL(fileURLWithPath: main.path + "-shm")
+        if fm.fileExists(atPath: main.path) { try? fm.removeItem(at: main) }
+        if fm.fileExists(atPath: wal.path) { try? fm.removeItem(at: wal) }
+        if fm.fileExists(atPath: shm.path) { try? fm.removeItem(at: shm) }
+    }
 
     /// Removes an entire pack directory. If removal fails, moves it to quarantine.
     func removePackDirectory(at dir: URL) {

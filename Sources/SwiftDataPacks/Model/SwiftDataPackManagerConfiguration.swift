@@ -10,7 +10,7 @@ import Foundation
 public struct SwiftDataPackManagerConfiguration {
     public let mainStoreName: String
 
-    public init(mainStoreName: String = "Default") {
+    public init(mainStoreName: String = "default") {
         self.mainStoreName = mainStoreName
     }
 }

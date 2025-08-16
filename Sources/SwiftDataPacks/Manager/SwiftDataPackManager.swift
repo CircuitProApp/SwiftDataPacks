@@ -26,17 +26,31 @@ public final class SwiftDataPackManager {
         let schema = Schema(models)
         self.schema = schema
 
-        // 2) Prepare app-support paths
+        // 2) Prepare app-support paths based on bundle identifier (NEW, SIMPLIFIED LOGIC)
         let fm = FileManager.default
-        let appSupport = try! fm.url(for: .applicationSupportDirectory,
-                                     in: .userDomainMask,
-                                     appropriateFor: nil,
-                                     create: true)
-        let root = appSupport.appendingPathComponent(config.appName, isDirectory: true)
-        try? fm.createDirectory(at: root, withIntermediateDirectories: true)
-        self.rootURL = root
-        print("SwiftDataPackManager root directory: \(root.path)")
-        print("Packs directory: \(root.appendingPathComponent(config.packsDirectoryName, isDirectory: true).path)")
+        
+        // Use the app's bundle identifier for the support directory name. This is a standard macOS convention.
+        // Fallback to a name from the info plist, or a hardcoded default if something is misconfigured.
+        guard let appIdentifier = Bundle.main.bundleIdentifier ?? Bundle.main.infoDictionary?[kCFBundleNameKey as String] as? String else {
+            fatalError("Cannot determine app bundle identifier. Please ensure it is set in your project's target settings.")
+        }
+        
+        do {
+            let appSupportURL = try fm.url(for: .applicationSupportDirectory,
+                                           in: .userDomainMask,
+                                           appropriateFor: nil,
+                                           create: true)
+            
+            // Create a single, conventionally-named root directory for all of the app's data.
+            let root = appSupportURL.appendingPathComponent(appIdentifier, isDirectory: true)
+            try fm.createDirectory(at: root, withIntermediateDirectories: true)
+            self.rootURL = root
+            
+            print("SwiftDataPackManager root directory: \(root.path)")
+
+        } catch {
+            fatalError("Could not create or access application support directory: \(error)")
+        }
 
         // 3) Load pack descriptors
         let packs = PackStore.load()
@@ -44,7 +58,7 @@ public final class SwiftDataPackManager {
 
         // 4) Ensure the main store exists on disk before loading
         do {
-            let storeURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: root)
+            let storeURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
             print("Main store location: \(storeURL.path)")
             try Self.ensureStoreExists(at: storeURL, schema: schema)
         } catch {
@@ -66,11 +80,9 @@ public final class SwiftDataPackManager {
                 print("Excluded packs at launch: \(titles)")
             }
         } catch {
-            // --- FIXED FALLBACK LOGIC ---
+            // If the build fails, create a single, writable default store at the correct location.
             print("Main container build failed: \(String(describing: error)). Falling back to a single default store.")
-            // If the build fails (e.g., no stores configured), create a single, writable
-            // default store at the correct location to ensure the app is usable.
-            let fallbackURL = Self.primaryStoreURL(for: "Default", rootURL: root)
+            let fallbackURL = Self.primaryStoreURL(for: "Default", rootURL: rootURL)
             print("Fallback store location: \(fallbackURL.path)")
             let fallbackConfig = ModelConfiguration("default", schema: schema, url: fallbackURL, allowsSave: true)
             built = try! ModelContainer(for: schema, configurations: [fallbackConfig])
@@ -80,6 +92,7 @@ public final class SwiftDataPackManager {
         // Optional: cleanup
         cleanupQuarantineOnLaunch()
     }
+
     // Public: Rebuild the main container (best-effort) and clear cache
     func reloadContainer() {
         do {
@@ -95,7 +108,6 @@ public final class SwiftDataPackManager {
                 print("Excluded packs on reload: \(titles)")
             }
         } catch {
-            // --- FIXED FALLBACK LOGIC ---
             print("reloadContainer failed: \(String(describing: error)) — falling back to a single default store.")
             do {
                 let fallbackURL = primaryStoreURL(for: "Default")
@@ -122,6 +134,7 @@ struct BuildError: LocalizedError {
 // MARK: - Build / Bootstrap
 
 extension SwiftDataPackManager {
+    // UPDATED HELPER: Now points to a NESTED directory inside the root for better organization.
     private static func primaryStoreURL(for name: String, rootURL: URL) -> URL {
         let storeDir = rootURL.appendingPathComponent(name, isDirectory: true)
         return storeDir.appendingPathComponent("\(name).store")
@@ -144,7 +157,6 @@ extension SwiftDataPackManager {
                                          rootURL: URL,
                                          mainStoreName: String,
                                          packs: [PackDescriptor]) throws -> (container: ModelContainer, excluded: [PackDescriptor]) {
-
         var validConfigurations: [ModelConfiguration] = []
 
         // The main store is essential. If it fails, we throw.
@@ -182,20 +194,13 @@ extension SwiftDataPackManager {
 // MARK: - Pack Management
 extension SwiftDataPackManager {
     func installPack(from downloadedURL: URL, id: String, title: String, allowsSave: Bool = false) {
-         // --- START FIX ---
-         // Before attempting any file operations on the URL from the file importer,
-         // we must explicitly start accessing the security-scoped resource.
          guard downloadedURL.startAccessingSecurityScopedResource() else {
              print("installPack failed: Could not gain security-scoped access to the URL.")
              return
          }
-
-         // Use a defer block to ensure we stop accessing the resource
-         // as soon as this function finishes, even if it throws an error.
          defer {
              downloadedURL.stopAccessingSecurityScopedResource()
          }
-         // --- END FIX ---
 
          do {
              let packsDir = try packsDirectory()
@@ -223,12 +228,9 @@ extension SwiftDataPackManager {
 
              reloadContainer()
          } catch {
-             // The original error message will now be more meaningful if it still fails.
              print("installPack failed: \(String(describing: error))")
              
-             // Your existing cleanup code is good.
-             let packsDir = (try? packsDirectory())
-             if let packsDir {
+             if let packsDir = try? packsDirectory() {
                  let destMain = packsDir.appendingPathComponent("\(id).store")
                  try? FileManager.default.removeItem(at: destMain)
                  try? FileManager.default.removeItem(at: URL(fileURLWithPath: destMain.path + "-wal"))
@@ -300,8 +302,9 @@ extension SwiftDataPackManager {
         Self.primaryStoreURL(for: name, rootURL: rootURL)
     }
 
+    // UPDATED HELPER: Hardcoded to "Packs" for consistency. No longer needs config.
     private func packsDirectory() throws -> URL {
-        let dir = rootURL.appendingPathComponent(config.packsDirectoryName, isDirectory: true)
+        let dir = rootURL.appendingPathComponent("Packs", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -380,8 +383,10 @@ extension SwiftDataPackManager {
         }
     }
 
+    // UPDATED HELPER: Now nested inside the Packs directory for tidiness.
     private func quarantineDirectory() throws -> URL {
-        let dir = rootURL.appendingPathComponent("PendingDeletion", isDirectory: true)
+        let packsDir = try packsDirectory()
+        let dir = packsDir.appendingPathComponent("PendingDeletion", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -406,12 +411,15 @@ extension SwiftDataPackManager {
     }
 }
 
-// (The following extensions, addMockPack and packDirectoryDocument, should remain largely the same
-// as their core logic is unaffected by the primary store changes. They correctly call reloadContainer().)
+// MARK: - Testing & Other Utilities
 extension SwiftDataPackManager {
     func addMockPack(title: String, readOnly: Bool = true, seed: (ModelContext) throws -> Void) {
         do {
-            let id = "\(config.appBundleID).pack.\(UUID().uuidString)"
+            // UPDATED: Use Bundle.main.bundleIdentifier directly for consistency.
+            guard let bundleID = Bundle.main.bundleIdentifier else {
+                throw BuildError(message: "Cannot determine app bundle identifier to generate mock pack ID.")
+            }
+            let id = "\(bundleID).pack.\(UUID().uuidString)"
             let packsDir = try packsDirectory()
             let dest = packsDir.appendingPathComponent("\(id).store")
             print("Creating mock pack '\(title)' at: \(dest.path)")
@@ -439,9 +447,7 @@ extension SwiftDataPackManager {
             print("addMockPack failed: \(error)")
         }
     }
-}
-
-extension SwiftDataPackManager {
+    
     func packDirectoryDocument(id: String) throws -> (PackDirectoryDocument, String) {
         guard let pack = installedPacks.first(where: { $0.id == id }) else {
             throw BuildError(message: "No pack with id \(id)")
@@ -461,14 +467,9 @@ extension SwiftDataPackManager {
     }
 }
 
+// MARK: - View Integration
 extension SwiftDataPackManager {
     /// Returns the ModelConfiguration for a given container source.
-    ///
-    /// This method provides the necessary building block to create custom, composed
-    /// ModelContainers for specific view hierarchies.
-    ///
-    /// - Parameter source: The `ContainerSource` (either `.mainStore` or a `.pack(id:)`).
-    /// - Returns: A `ModelConfiguration` if the source is valid, otherwise `nil`.
     public func configuration(for source: ContainerSource) -> ModelConfiguration? {
         switch source {
         case .mainStore:
@@ -479,7 +480,6 @@ extension SwiftDataPackManager {
                                       allowsSave: true)
             
         case .pack(let id):
-            // Find the descriptor for the requested pack.
             guard let pack = installedPacks.first(where: { $0.id == id }) else {
                 print("Configuration request failed: No pack found with ID \(id)")
                 return nil

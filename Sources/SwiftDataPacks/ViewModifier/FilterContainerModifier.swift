@@ -24,9 +24,7 @@ public struct FilterContainerModifier: ViewModifier {
                 break
             }
         }
-        
-        // --- FIX IS HERE ---
-        // Build the `allPossibleSources` array in two steps to help the type checker.
+
         var allPossibleSources: [ContainerSource] = [.mainStore]
         allPossibleSources.append(contentsOf: manager.installedPacks.map { .pack(id: $0.id) })
 
@@ -34,7 +32,6 @@ public struct FilterContainerModifier: ViewModifier {
         if Set(sources) == Set(allPossibleSources) {
             return manager.mainContainer
         }
-        // --- END FIX ---
 
         // Fallback to the original dynamic building logic if not optimized
         let configurations = sources.compactMap { manager.configuration(for: $0) }
@@ -44,11 +41,14 @@ public struct FilterContainerModifier: ViewModifier {
 
     public func body(content: Content) -> some View {
         if let container = containerToShow {
-            content.modelContainer(container)
+            content
+                .modelContainer(container)
         } else {
-            ContentUnavailableView("No Data Source",
-                                   systemImage: "questionmark.folder",
-                                   description: Text("No valid data sources were specified."))
+            ContentUnavailableView(
+                "No Data Source",
+                systemImage: "questionmark.folder",
+                description: Text("No valid data sources were specified.")
+            )
         }
     }
 }

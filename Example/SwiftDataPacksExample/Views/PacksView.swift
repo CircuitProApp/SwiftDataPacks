@@ -1,30 +1,30 @@
+//
+//  PacksView.swift
+//  SwiftDataPacksExample
+//
+//  Created by Giorgi Tchelidze on 8/16/25.
+//
+
 import SwiftUI
 import UniformTypeIdentifiers
-import SwiftData
 import SwiftDataPacks
 
 struct PacksView: View {
+
     @PackManager private var manager
     @State private var isPickingFile = false
-
-    // State for the file exporter
+    
     @State private var documentToExport: PackDirectoryDocument?
     @State private var exportSuggestedName: String = "Pack.pack"
     @State private var isExporting = false
-
-    // State for showing the contents of a single pack in a sheet
+    
     @State private var selectedPackID: UUID?
-
+    
     var body: some View {
         SectionView {
             Text("Installed Packs")
         } content: {
-            
-     
-            
-            // The main list of installed packs.
-            List(selection: $selectedPackID) {
-                // If there are no packs, show a helpful message.
+            List {
                 if manager.installedPacks.isEmpty {
                     HStack {
                         Spacer()
@@ -39,12 +39,12 @@ struct PacksView: View {
                     // Iterate directly over the manager's installedPacks property.
                     ForEach(manager.installedPacks) { pack in
                         packRow(for: pack)
-                            .tag(pack.id) // Use .tag for selection
+                            .onTapGesture {
+                                selectedPackID = pack.id
+                            }
                     }
                 }
             }
-            
-
         } footer: {
             HStack(spacing: 12) {
                 Button("Install Pack…") { isPickingFile = true }
@@ -59,12 +59,9 @@ struct PacksView: View {
                         }
                     }
                 }
-                
                 Spacer()
             }
-         
         }
-  
         .fileImporter(
             isPresented: $isPickingFile,
             allowedContentTypes: [.folder],
@@ -85,12 +82,9 @@ struct PacksView: View {
             }
         }
         .sheet(item: $selectedPackID.toBinding()) { packID in
-            // When a pack is selected, show its items in a sheet.
             PackItemsView()
                 .filterContainer(for: .pack(id: packID))
-            
         }
-        
     }
     
     /// A view builder function to create a row for a single pack.
@@ -109,14 +103,14 @@ struct PacksView: View {
             }
             
             Spacer()
-
+            
             Button("Export…", systemImage: "square.and.arrow.up") {
                 exportPack(id: pack.id)
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
             .help("Export Pack")
-
+            
             Button("Remove", systemImage: "trash", role: .destructive) {
                 Task { await manager.removePack(id: pack.id) }
             }
@@ -139,27 +133,7 @@ struct PacksView: View {
             isExporting = true
         } catch {
             print("Export prep failed: \(error.localizedDescription)")
-            // Optionally, show an alert to the user here.
         }
     }
 }
 
-extension UUID: @retroactive Identifiable {
-    public var id: UUID { self }
-}
-// A simple extension to convert an optional to a binding for use in sheets/popovers.
-extension Optional {
-    func toBinding() -> Binding<Wrapped?> {
-        Binding<Wrapped?>(
-            get: { self },
-            set: { _ in } // This binding is read-only for triggering the sheet
-        )
-    }
-}
-
-// A helper for presenting sheets based on a non-optional selection.
-extension Binding where Value == UUID? {
-    func toBinding() -> Binding<UUID?> {
-        self
-    }
-}

@@ -12,6 +12,8 @@ struct AllItemsView: View {
     
     @Query private var allComponents: [Component]
     @PackManager private var manager
+    @UserContext private var userContext
+    @State private var newComponentName: String = ""
     
     @Binding var showEditable: Bool
     
@@ -25,7 +27,7 @@ struct AllItemsView: View {
                 } label: {
                     Text("Show Editable")
                 }
-
+                
             }
         } content: {
             List(allComponents, id: \.id) { component in
@@ -33,27 +35,19 @@ struct AllItemsView: View {
             }
         } footer: {
             HStack(spacing: 12) {
+                TextField("New Component Name", text: $newComponentName)
+                    .textFieldStyle(.roundedBorder)
                 Button("Add New Component") {
                     addNewComponent()
                 }
-                
-            
-                
                 Spacer()
             }
-
         }
     }
-    
+
     private func addNewComponent() {
-        do {
-            // This is it. This is the clean, robust API.
-            try manager.performWrite { context in
-                let newComponent = Component(name: "New User Component")
-                context.insert(newComponent)
-            }
-        } catch {
-            print("Failed to save new component: \(error)")
-        }
+        let newComponent = Component(name: newComponentName)
+        userContext.insert(newComponent)
+      
     }
 }

@@ -1,29 +1,17 @@
+//
+//  SwiftDataPackManager.swift
+//  SwiftDataPacks
+//
+//  Created by Giorgi Tchelidze on 8/16/25.
+//
+
 import Foundation
 import SwiftUI
 import SwiftData
 import Observation
 import OSLog
 
-// A shared logger for consistent, filterable logging.
-private let logger = Logger(subsystem: "sh.chorus.CircuitPro.SwiftDataPacks", category: "SwiftDataPackManager")
-
-/// Defines errors that can be thrown by the SwiftDataPackManager.
-public enum PackManagerError: LocalizedError {
-    case initializationFailed(reason: String)
-    case installationFailed(reason: String)
-    case buildError(String)
-
-    public var errorDescription: String? {
-        switch self {
-        case .initializationFailed(let reason):
-            return "Manager Initialization Failed: \(reason)"
-        case .installationFailed(let reason):
-            return "Pack Installation Failed: \(reason)"
-        case .buildError(let reason):
-            return "Build Failed: \(reason)"
-        }
-    }
-}
+private let logger = Logger(subsystem: "app.circuitpro.SwiftDataPacks", category: "SwiftDataPackManager")
 
 @Observable
 @MainActor
@@ -31,14 +19,14 @@ public final class SwiftDataPackManager {
     // MARK: - Public Containers
 
     /// A read-write container for the user's data ONLY. Use for all insertions via `performWrite`.
-    public private(set) var userContainer: ModelContainer
+    private(set) var userContainer: ModelContainer
     
     /// A read-only container for all installed packs ONLY.
-    public private(set) var packsContainer: ModelContainer
+    private(set) var packsContainer: ModelContainer
 
     /// The main, composite container of all stores for unified display.
     /// This should be the default container for the app's views.
-    public private(set) var mainContainer: ModelContainer
+    private(set) var mainContainer: ModelContainer
 
     // MARK: - Public State
     

@@ -9,9 +9,12 @@ import SwiftUI
 import SwiftData
 
 struct PackItemsView: View {
-    @Query(sort: \Component.name) private var components: [Component]
-    @Environment(\.modelContext) private var modelContext
+
+    @Environment(\.modelContext)
+    private var modelContext
     
+    @Query(sort: \Component.name) private var components: [Component]
+
     var body: some View {
         VStack {
             List(components, id: \.id) { component in

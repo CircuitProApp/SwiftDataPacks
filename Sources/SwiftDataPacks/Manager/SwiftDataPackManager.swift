@@ -2,15 +2,46 @@ import Foundation
 import SwiftUI
 import SwiftData
 import Observation
+import OSLog
+
+// A shared logger for consistent, filterable logging.
+private let logger = Logger(subsystem: "sh.chorus.CircuitPro.SwiftDataPacks", category: "SwiftDataPackManager")
+
+/// Defines errors that can be thrown by the SwiftDataPackManager.
+public enum PackManagerError: LocalizedError {
+    case initializationFailed(reason: String)
+    case installationFailed(reason: String)
+    case buildError(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .initializationFailed(let reason):
+            return "Manager Initialization Failed: \(reason)"
+        case .installationFailed(let reason):
+            return "Pack Installation Failed: \(reason)"
+        case .buildError(let reason):
+            return "Build Failed: \(reason)"
+        }
+    }
+}
 
 @Observable
 @MainActor
 public final class SwiftDataPackManager {
-    // MARK: - Public Properties
-    
-    /// The main, multi-store ModelContainer managed by the pack system.
-    private(set) var container: ModelContainer
+    // MARK: - Public Containers
 
+    /// A read-write container for the user's data ONLY. Use for all insertions via `performWrite`.
+    public private(set) var userContainer: ModelContainer
+    
+    /// A read-only container for all installed packs ONLY.
+    public private(set) var packsContainer: ModelContainer
+
+    /// The main, composite container of all stores for unified display.
+    /// This should be the default container for the app's views.
+    public private(set) var mainContainer: ModelContainer
+
+    // MARK: - Public State
+    
     /// Provides public, read-only access to the list of installed packs from the registry.
     public var installedPacks: [InstalledPack] {
         registry.packs
@@ -18,102 +49,230 @@ public final class SwiftDataPackManager {
 
     // MARK: - Core State & Delegates
     
-    // Core configuration
     let schema: Schema
     let rootURL: URL
     let config: SwiftDataPackManagerConfiguration
-
-    // Delegated responsibilities
     private let storage: PackStorageManager
     private let registry: PackRegistry
 
     // MARK: - Initialization
 
-    init(for models: [any PersistentModel.Type], config: SwiftDataPackManagerConfiguration) {
-           self.config = config
-           self.schema = Schema(models)
+    public init(for models: [any PersistentModel.Type], config: SwiftDataPackManagerConfiguration) throws {
+        self.config = config
+        self.schema = Schema(models)
 
-           // 1. Establish the root directory for all operations
-           let fm = FileManager.default
-           guard let appIdentifier = Bundle.main.bundleIdentifier ?? Bundle.main.infoDictionary?[kCFBundleNameKey as String] as? String else {
-               fatalError("Cannot determine app bundle identifier.")
-           }
-           
-           do {
-               let appSupportURL = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-               let root = appSupportURL.appendingPathComponent(appIdentifier, isDirectory: true)
-               try fm.createDirectory(at: root, withIntermediateDirectories: true)
-               self.rootURL = root
-               print("SwiftDataPackManager root URL: \(root.path)")
-
-               // 2. Initialize the delegated managers
-               self.storage = PackStorageManager(rootURL: root, schema: schema)
-               
-               // --- CHANGE HERE ---
-               // The registry's storeURL now points inside the Packs directory.
-               // We get this path directly from the storage manager's public property.
-               let registryURL = self.storage.packsDirectoryURL.appendingPathComponent("installed_packs.json")
-               self.registry = PackRegistry(storeURL: registryURL)
-               // --- END CHANGE ---
-               
-               // 3. Ensure all necessary file system structures exist
-               // This now also ensures the parent directory for "installed_packs.json" exists.
-               try self.storage.bootstrap()
-               let mainStoreURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: root)
-               try Self.ensureStoreExists(at: mainStoreURL, schema: schema)
-
-               // 4. Build the main container using the loaded packs from the registry
-               let result = try Self.buildContainerBestEffort(
-                   schema: schema,
-                   mainStoreURL: mainStoreURL,
-                   mainStoreName: config.mainStoreName,
-                   packs: registry.packs
-               )
-               self.container = result.container
-               if !result.excluded.isEmpty {
-                   let titles = result.excluded.map { $0.metadata.title }.joined(separator: ", ")
-                   print("Excluded packs at launch: \(titles)")
-               }
-           } catch {
-                fatalError("SwiftDataPackManager initialization failed: \(error)")
-           }
-
-           // 5. Perform initial cleanup
-           storage.emptyQuarantine()
-       }
-    /// Rebuilds the main ModelContainer from the current list of installed packs.
-    func reloadContainer() {
+        // 1. Establish Root Directory
+        let fm = FileManager.default
+        guard let appIdentifier = Bundle.main.bundleIdentifier ?? Bundle.main.infoDictionary?[kCFBundleNameKey as String] as? String else {
+            throw PackManagerError.initializationFailed(reason: "Cannot determine app bundle identifier.")
+        }
+        
         do {
+            let appSupportURL = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            self.rootURL = appSupportURL.appendingPathComponent(appIdentifier, isDirectory: true)
+            try fm.createDirectory(at: rootURL, withIntermediateDirectories: true)
+            logger.info("SwiftDataPackManager root URL: \(self.rootURL.path)")
+
+            // 2. Initialize Delegated Managers
+            self.storage = PackStorageManager(rootURL: rootURL, schema: schema)
+            let registryURL = self.storage.packsDirectoryURL.appendingPathComponent("installed_packs.json")
+            self.registry = PackRegistry(storeURL: registryURL)
+            
+            // 3. Bootstrap File System & Build Containers
+            try self.storage.bootstrap()
             let mainStoreURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
-            let result = try Self.buildContainerBestEffort(
+            try Self.ensureStoreExists(at: mainStoreURL, schema: schema)
+
+            let result = try Self.buildAllContainers(
                 schema: schema,
                 mainStoreURL: mainStoreURL,
                 mainStoreName: config.mainStoreName,
                 packs: registry.packs
             )
-            container = result.container
+            self.userContainer = result.user
+            self.packsContainer = result.packs
+            self.mainContainer = result.main
+            
             if !result.excluded.isEmpty {
                 let titles = result.excluded.map { $0.metadata.title }.joined(separator: ", ")
-                print("Excluded packs on reload: \(titles)")
+                logger.warning("Excluded packs at launch: \(titles)")
             }
         } catch {
-            print("reloadContainer failed: \(String(describing: error)) — falling back to a single default store.")
-            let fallbackURL = Self.primaryStoreURL(for: "default", rootURL: rootURL)
-            let fallbackConfig = ModelConfiguration("default", schema: schema, url: fallbackURL, allowsSave: true)
-            container = try! ModelContainer(for: schema, configurations: [fallbackConfig])
+            throw PackManagerError.initializationFailed(reason: error.localizedDescription)
         }
 
+        // 4. Perform initial cleanup
+        storage.emptyQuarantine()
     }
-}
+    
+    // MARK: - Public Write API
+    
+    /// Executes a write operation within a dedicated context that can only see the user's main store.
+    /// This is the sole, safe entry point for all insertions and modifications.
+    /// - Parameter block: A closure that receives a write-only `ModelContext`.
+    public func performWrite(_ block: (ModelContext) throws -> Void) throws {
+        let context = ModelContext(userContainer)
+        try block(context)
+        if context.hasChanges {
+            try context.save()
+        }
+    }
 
-// MARK: - Errors
-struct BuildError: LocalizedError {
-    let message: String
-    var errorDescription: String? { message }
-}
+    // MARK: - Pack Management
+    
+    /// Installs a new data pack from a source folder URL.
+    public func installPack(from downloadedURL: URL, allowsSave: Bool = false) {
+        guard downloadedURL.startAccessingSecurityScopedResource() else {
+             logger.error("Install failed: Could not gain security-scoped access to the pack folder.")
+             return
+        }
+        defer { downloadedURL.stopAccessingSecurityScopedResource() }
 
-// MARK: - Build / Bootstrap Logic
-extension SwiftDataPackManager {
+        let tempInstallDir = storage.quarantineDirectoryURL.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: tempInstallDir) }
+
+        do {
+            try FileManager.default.createDirectory(at: tempInstallDir, withIntermediateDirectories: true)
+            
+            let manifestURL = downloadedURL.appendingPathComponent("manifest.json")
+            let manifestData = try Data(contentsOf: manifestURL)
+            let metadata = try JSONDecoder().decode(Pack.self, from: manifestData)
+
+            let sourceDBURL = downloadedURL.appendingPathComponent(metadata.databaseFileName)
+            let tempStoreURL = tempInstallDir.appendingPathComponent(metadata.databaseFileName)
+            
+            try storage.copySQLiteSet(from: sourceDBURL, to: tempStoreURL)
+            try manifestData.write(to: tempInstallDir.appendingPathComponent("manifest.json"), options: .atomic)
+            try storage.validateStore(at: tempStoreURL)
+            
+            let finalDestDir = try storage.createUniquePackDirectory(for: metadata)
+            try FileManager.default.moveItem(at: tempInstallDir, to: finalDestDir)
+            
+            let newPack = InstalledPack(metadata: metadata, directoryURL: finalDestDir, allowsSave: allowsSave)
+            registry.add(newPack)
+            registry.save()
+            
+            reloadAllContainers()
+            logger.info("Successfully installed pack: '\(metadata.title)'")
+        } catch {
+            logger.error("installPack failed: \(String(describing: error))")
+        }
+    }
+
+    /// Removes a pack by its ID and deletes its directory from disk.
+    public func removePack(id: UUID) async {
+        guard let removedPack = registry.remove(id: id) else { return }
+        registry.save()
+        
+        reloadAllContainers()
+
+        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(250))
+        
+        storage.removePackDirectory(at: removedPack.directoryURL)
+        logger.info("Removed pack: '\(removedPack.metadata.title)'")
+    }
+
+    /// Creates and installs a new pack with mock data for testing or previews.
+    public func addMockPack(title: String, readOnly: Bool = true, seed: (ModelContext) throws -> Void) {
+        do {
+            let metadata = Pack(id: UUID(), title: title, version: 1)
+            let destDir = try storage.createUniquePackDirectory(for: metadata)
+            let destStoreURL = destDir.appendingPathComponent(metadata.databaseFileName)
+            
+            let seedCfg = ModelConfiguration("seed-\(metadata.id.uuidString)", schema: schema, url: destStoreURL, allowsSave: true)
+            let tempContainer = try ModelContainer(for: schema, configurations: [seedCfg])
+            let ctx = ModelContext(tempContainer)
+            try seed(ctx)
+            try ctx.save()
+            
+            let manifestData = try JSONEncoder().encode(metadata)
+            try manifestData.write(to: destDir.appendingPathComponent("manifest.json"))
+            
+            let installedPack = InstalledPack(metadata: metadata, directoryURL: destDir, allowsSave: !readOnly)
+            registry.add(installedPack)
+            registry.save()
+            
+            reloadAllContainers()
+        } catch {
+            logger.error("addMockPack failed: \(error)")
+        }
+    }
+    
+    // MARK: - Container Reloading
+    
+    private func reloadAllContainers() {
+        do {
+            let mainStoreURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
+            let result = try Self.buildAllContainers(
+                schema: schema,
+                mainStoreURL: mainStoreURL,
+                mainStoreName: config.mainStoreName,
+                packs: registry.packs
+            )
+            userContainer = result.user
+            packsContainer = result.packs
+            mainContainer = result.main
+            if !result.excluded.isEmpty {
+                let titles = result.excluded.map { $0.metadata.title }.joined(separator: ", ")
+                logger.warning("Excluded packs on reload: \(titles)")
+            }
+        } catch {
+            logger.critical("CRITICAL: reloadAllContainers failed: \(error.localizedDescription). App may be in an inconsistent state.")
+        }
+    }
+
+    // MARK: - Build Logic
+    
+    private static func buildAllContainers(schema: Schema, mainStoreURL: URL, mainStoreName: String, packs: [InstalledPack]) throws -> (main: ModelContainer, user: ModelContainer, packs: ModelContainer, excluded: [InstalledPack]) {
+        let userConfig = ModelConfiguration(mainStoreName, schema: schema, url: mainStoreURL, allowsSave: true)
+        
+        var validPackConfigs: [ModelConfiguration] = []
+        var excludedPacks: [InstalledPack] = []
+        for p in packs {
+            let cfg = ModelConfiguration(p.id.uuidString, schema: schema, url: p.storeURL, allowsSave: p.allowsSave)
+            do {
+                _ = try ModelContainer(for: schema, configurations: [cfg])
+                validPackConfigs.append(cfg)
+            } catch {
+                logger.warning("Excluding pack '\(p.metadata.title)' due to load error: \(error.localizedDescription)")
+                excludedPacks.append(p)
+            }
+        }
+        
+        let userContainer = try ModelContainer(for: schema, configurations: [userConfig])
+        let packsContainer = try ModelContainer(for: schema, configurations: validPackConfigs)
+        let mainContainer = try ModelContainer(for: schema, configurations: [userConfig] + validPackConfigs)
+        
+        return (mainContainer, userContainer, packsContainer, excludedPacks)
+    }
+
+    // MARK: - Utilities & Helpers
+    
+    /// Prepares a document for exporting an installed pack as a folder.
+    public func packDirectoryDocument(for id: UUID) throws -> (PackDirectoryDocument, String) {
+        guard let pack = registry.packs.first(where: { $0.id == id }) else {
+            throw PackManagerError.buildError("No pack with id \(id.uuidString)")
+        }
+        return try storage.createExportDocument(for: pack)
+    }
+
+    /// Retrieves the ModelConfiguration for a specific data source.
+    public func configuration(for source: ContainerSource) -> ModelConfiguration? {
+        switch source {
+        case .mainStore:
+            let storeURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
+            return ModelConfiguration(config.mainStoreName, schema: schema, url: storeURL, allowsSave: true)
+            
+        case .pack(let id):
+            guard let pack = registry.packs.first(where: { $0.id == id }) else {
+                logger.error("Configuration request failed: No pack found with ID \(id)")
+                return nil
+            }
+            return ModelConfiguration(pack.id.uuidString, schema: schema, url: pack.storeURL, allowsSave: pack.allowsSave)
+        }
+    }
+    
     static func primaryStoreURL(for name: String, rootURL: URL) -> URL {
         let storeDir = rootURL.appendingPathComponent(name, isDirectory: true)
         return storeDir.appendingPathComponent("\(name).store")
@@ -125,170 +284,8 @@ extension SwiftDataPackManager {
         try fm.createDirectory(at: storeParentDir, withIntermediateDirectories: true)
         guard !fm.fileExists(atPath: storeURL.path) else { return }
         
-        // Create an empty store file by initializing a temporary container and saving.
         let seedCfg = ModelConfiguration("seed-\(UUID().uuidString)", schema: schema, url: storeURL, allowsSave: true)
         let tempContainer = try ModelContainer(for: schema, configurations: [seedCfg])
         try ModelContext(tempContainer).save()
-    }
-
-    static func buildContainerBestEffort(schema: Schema, mainStoreURL: URL, mainStoreName: String, packs: [InstalledPack]) throws -> (container: ModelContainer, excluded: [InstalledPack]) {
-        var validConfigurations: [ModelConfiguration] = []
-
-        // Configure the main, writable store
-        let mainConfig = ModelConfiguration(mainStoreName, schema: schema, url: mainStoreURL, allowsSave: true)
-        validConfigurations.append(mainConfig)
-
-        // Add a configuration for each valid installed pack
-        var excludedPacks: [InstalledPack] = []
-        for p in packs {
-            let cfg = ModelConfiguration(p.id.uuidString, schema: schema, url: p.storeURL, allowsSave: p.allowsSave)
-            do {
-                _ = try ModelContainer(for: schema, configurations: [cfg])
-                validConfigurations.append(cfg)
-            } catch {
-                print("Excluding pack '\(p.metadata.title)' due to load error: \(error.localizedDescription)")
-                excludedPacks.append(p)
-            }
-        }
-        
-        let container = try ModelContainer(for: schema, configurations: validConfigurations)
-        return (container, excludedPacks)
-    }
-}
-
-// MARK: - Public Pack Management API
-extension SwiftDataPackManager {
-
-    /// Installs a new data pack from a source folder URL.
-    public func installPack(from downloadedURL: URL, allowsSave: Bool = false) {
-        guard downloadedURL.startAccessingSecurityScopedResource() else {
-             print("Install failed: Could not gain security-scoped access to the pack folder.")
-             return
-        }
-        defer { downloadedURL.stopAccessingSecurityScopedResource() }
-
-        do {
-            // 1. Decode metadata
-            let manifestURL = downloadedURL.appendingPathComponent("manifest.json")
-            let manifestData = try Data(contentsOf: manifestURL)
-            let metadata = try JSONDecoder().decode(Pack.self, from: manifestData)
-
-            // 2. Delegate all file operations to the storage manager
-            let destDir = try storage.createUniquePackDirectory(for: metadata)
-            let sourceDBURL = downloadedURL.appendingPathComponent(metadata.databaseFileName)
-            let destStoreURL = destDir.appendingPathComponent(metadata.databaseFileName)
-            
-            try storage.copySQLiteSet(from: sourceDBURL, to: destStoreURL)
-            try manifestData.write(to: destDir.appendingPathComponent("manifest.json"), options: .atomic)
-             try storage.validateStore(at: destStoreURL)
-            
-            // 3. Delegate registry update
-            let newPack = InstalledPack(metadata: metadata, directoryURL: destDir, allowsSave: allowsSave)
-            registry.add(newPack)
-            registry.save()
-            
-            // 4. Reload the container to include the new pack
-            reloadContainer()
-            print("Successfully installed pack: '\(metadata.title)'")
-        } catch {
-            print("installPack failed: \(String(describing: error))")
-            // Future enhancement: Clean up `destDir` on failure.
-        }
-    }
-
-    /// Removes a pack by its ID and deletes its directory from disk.
-    public func removePack(id: UUID) async {
-        // 1. Delegate registry update
-        guard let removedPack = registry.remove(id: id) else { return }
-        registry.save()
-        
-        // 2. Reload container immediately to remove the pack from the app's view
-        reloadContainer()
-
-        // 3. Defer directory deletion to avoid race conditions with SwiftData
-        await Task.yield()
-        try? await Task.sleep(for: .milliseconds(500))
-        
-        storage.removePackDirectory(at: removedPack.directoryURL)
-        print("Removed pack: '\(removedPack.metadata.title)'")
-    }
-}
-
-// MARK: - Utilities (Testing & Export)
-extension SwiftDataPackManager {
-
-    /// Creates and installs a new pack with mock data for testing or previews.
-    public func addMockPack(title: String, readOnly: Bool = true, seed: (ModelContext) throws -> Void) {
-        do {
-            // 1. Create metadata and use the storage manager to allocate a directory
-            let metadata = Pack(id: UUID(), title: title, version: 1)
-            let destDir = try storage.createUniquePackDirectory(for: metadata)
-            let destStoreURL = destDir.appendingPathComponent(metadata.databaseFileName)
-            
-            // 2. Seed the database file at the destination
-            let seedCfg = ModelConfiguration("seed-\(metadata.id.uuidString)", schema: schema, url: destStoreURL, allowsSave: true)
-            let tempContainer = try ModelContainer(for: schema, configurations: [seedCfg])
-            let ctx = ModelContext(tempContainer)
-            try seed(ctx)
-            try ctx.save()
-            
-            // 3. Write manifest and register the new pack
-            let manifestData = try JSONEncoder().encode(metadata)
-            try manifestData.write(to: destDir.appendingPathComponent("manifest.json"))
-            
-            let installedPack = InstalledPack(metadata: metadata, directoryURL: destDir, allowsSave: !readOnly)
-            registry.add(installedPack)
-            registry.save()
-            
-            reloadContainer()
-        } catch {
-            print("addMockPack failed: \(error)")
-        }
-    }
-
-    /// Prepares a document for exporting an installed pack as a folder.
-    public func packDirectoryDocument(for id: UUID) throws -> (PackDirectoryDocument, String) {
-        guard let pack = registry.packs.first(where: { $0.id == id }) else {
-            throw BuildError(message: "No pack with id \(id.uuidString)")
-        }
-        
-        let fm = FileManager.default
-        let storeURL = pack.storeURL
-        var files: [String: Data] = [pack.metadata.databaseFileName: try Data(contentsOf: storeURL)]
-        
-        // Include -wal and -shm files if they exist
-        let walURL = URL(fileURLWithPath: storeURL.path + "-wal")
-        if fm.fileExists(atPath: walURL.path) {
-            files[walURL.lastPathComponent] = try Data(contentsOf: walURL)
-        }
-        let shmURL = URL(fileURLWithPath: storeURL.path + "-shm")
-        if fm.fileExists(atPath: shmURL.path) {
-            files[shmURL.lastPathComponent] = try Data(contentsOf: shmURL)
-        }
-
-        let doc = PackDirectoryDocument(manifest: pack.metadata, databaseFiles: files)
-        let suggestedName = pack.metadata.title.replacingOccurrences(of: "/", with: "-") + ".pack"
-        
-        return (doc, suggestedName)
-    }
-}
-
-// MARK: - Model Configuration Access
-extension SwiftDataPackManager {
-
-    /// Retrieves the ModelConfiguration for a specific data source (main store or a pack).
-    public func configuration(for source: ContainerSource) -> ModelConfiguration? {
-        switch source {
-        case .mainStore:
-            let storeURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
-            return ModelConfiguration(config.mainStoreName, schema: schema, url: storeURL, allowsSave: true)
-            
-        case .pack(let id):
-            guard let pack = registry.packs.first(where: { $0.id == id }) else {
-                print("Configuration request failed: No pack found with ID \(id)")
-                return nil
-            }
-            return ModelConfiguration(pack.id.uuidString, schema: schema, url: pack.storeURL, allowsSave: pack.allowsSave)
-        }
     }
 }

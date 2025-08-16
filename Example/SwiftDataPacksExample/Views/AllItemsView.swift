@@ -7,11 +7,12 @@
 
 import SwiftUI
 import SwiftData
+import SwiftDataPacks
 
 struct AllItemsView: View {
     
     @Query private var allComponents: [Component]
-    @Environment(\.modelContext) private var modelContext
+    @PackManager private var manager
     
     @Binding var showEditable: Bool
     
@@ -34,14 +35,7 @@ struct AllItemsView: View {
         } footer: {
             HStack(spacing: 12) {
                 Button("Add New Component") {
-                    let newComponent = Component(name: "New component")
-                    modelContext.insert(newComponent)
-                    do {
-                        try modelContext.save()
-                    } catch {
-                        // Handle the save error, e.g., by logging it
-                        print("Failed to save new component: \(error)")
-                    }
+                    addNewComponent()
                 }
                 
             
@@ -49,6 +43,18 @@ struct AllItemsView: View {
                 Spacer()
             }
 
+        }
+    }
+    
+    private func addNewComponent() {
+        do {
+            // This is it. This is the clean, robust API.
+            try manager.performWrite { context in
+                let newComponent = Component(name: "New User Component")
+                context.insert(newComponent)
+            }
+        } catch {
+            print("Failed to save new component: \(error)")
         }
     }
 }

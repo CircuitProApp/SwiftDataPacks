@@ -50,7 +50,7 @@ struct PackStorageManager {
         }
 
         let shortID = String(pack.id.uuidString.prefix(8))
-        candidate = packsDirectoryURL.appendingPathComponent("\(baseName) - \(shortID).pack", isDirectory: true)
+        candidate = packsDirectoryURL.appendingPathComponent("\(baseName)-\(shortID).pack", isDirectory: true)
         
         var i = 2
         while fm.fileExists(atPath: candidate.path) {
@@ -59,6 +59,30 @@ struct PackStorageManager {
         }
         try fm.createDirectory(at: candidate, withIntermediateDirectories: true)
         return candidate
+    }
+    
+    /// Creates a document representation of a pack for exporting.
+    func createExportDocument(for pack: InstalledPack) throws -> (PackDirectoryDocument, String) {
+        let storeURL = pack.storeURL
+        var files: [String: Data] = [:]
+
+        // Main database file must exist
+        files[pack.metadata.databaseFileName] = try Data(contentsOf: storeURL)
+        
+        // Include -wal and -shm files if they exist
+        let walURL = URL(fileURLWithPath: storeURL.path + "-wal")
+        if fm.fileExists(atPath: walURL.path) {
+            files[walURL.lastPathComponent] = try Data(contentsOf: walURL)
+        }
+        let shmURL = URL(fileURLWithPath: storeURL.path + "-shm")
+        if fm.fileExists(atPath: shmURL.path) {
+            files[shmURL.lastPathComponent] = try Data(contentsOf: shmURL)
+        }
+
+        let doc = PackDirectoryDocument(manifest: pack.metadata, databaseFiles: files)
+        let suggestedName = sanitizeFilename(pack.metadata.title) + ".pack"
+        
+        return (doc, suggestedName)
     }
 
     /// Copies the SQLite file set (store, wal, shm) from a source to a destination.

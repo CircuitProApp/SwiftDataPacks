@@ -13,36 +13,39 @@ public struct FilterContainerModifier: ViewModifier {
     
     let sources: [ContainerSource]
     
-    private var containerResult: Result<ModelContainer, Error>? {
-        let configurations = sources.compactMap { manager.configuration(for: $0) }
-        
-        guard !configurations.isEmpty else { return nil }
-
-        do {
-            let container = try ModelContainer(for: manager.schema, configurations: configurations)
-            return .success(container)
-        } catch {
-            return .failure(error)
+    private var containerToShow: ModelContainer? {
+        // Optimization: If only one source is requested, use a pre-built container.
+        if sources.count == 1 {
+            switch sources[0] {
+            case .mainStore:
+                return manager.userContainer
+            case .pack:
+                // For a single pack, we still build temporarily.
+                break
+            }
         }
+        
+        // --- FIX IS HERE ---
+        // Build the `allPossibleSources` array in two steps to help the type checker.
+        var allPossibleSources: [ContainerSource] = [.mainStore]
+        allPossibleSources.append(contentsOf: manager.installedPacks.map { .pack(id: $0.id) })
+
+        // Optimization: If all sources are selected, we can use the main container.
+        if Set(sources) == Set(allPossibleSources) {
+            return manager.mainContainer
+        }
+        // --- END FIX ---
+
+        // Fallback to the original dynamic building logic if not optimized
+        let configurations = sources.compactMap { manager.configuration(for: $0) }
+        guard !configurations.isEmpty else { return nil }
+        return try? ModelContainer(for: manager.schema, configurations: configurations)
     }
 
     public func body(content: Content) -> some View {
-        // Now, the body's logic is simple control flow that the ViewBuilder understands.
-        if let result = containerResult {
-            switch result {
-            case .success(let composedContainer):
-                // On success, inject the container.
-                content
-                    .modelContainer(composedContainer)
-                
-            case .failure:
-                // On failure, show an error view.
-                ContentUnavailableView("Error Loading Data",
-                                       systemImage: "exclamationmark.triangle",
-                                       description: Text("The specified data stores could not be loaded."))
-            }
+        if let container = containerToShow {
+            content.modelContainer(container)
         } else {
-            // If there were no sources to begin with, show the "no source" view.
             ContentUnavailableView("No Data Source",
                                    systemImage: "questionmark.folder",
                                    description: Text("No valid data sources were specified."))

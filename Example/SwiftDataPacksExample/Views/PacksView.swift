@@ -36,7 +36,6 @@ struct PacksView: View {
                         Spacer()
                     }
                 } else {
-                    // Iterate directly over the manager's installedPacks property.
                     ForEach(manager.installedPacks) { pack in
                         packRow(for: pack)
                             .onTapGesture {
@@ -52,7 +51,7 @@ struct PacksView: View {
                 Menu("New Mock Pack") {
                     ForEach(MockDataGenerator.ComponentType.allCases, id: \.self) { type in
                         Button("New \(type.rawValue) Pack") {
-                            let packTitle = "\(type.rawValue)s" // e.g. "Resistors"
+                            let packTitle = "\(type.rawValue)"
                             manager.addMockPack(title: packTitle, readOnly: true) { context in
                                 try? MockDataGenerator.generate(context: context, type: type, items: 10)
                             }

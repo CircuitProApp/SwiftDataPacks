@@ -35,6 +35,11 @@ public final class SwiftDataPackManager {
         registry.packs
     }
 
+    /// The top-level directory on disk where all pack folders are stored.
+    public var packsDirectoryURL: URL {
+        storage.packsDirectoryURL
+    }
+
     // MARK: - Core State & Delegates
     
     let schema: Schema
@@ -244,6 +249,28 @@ public final class SwiftDataPackManager {
         }
         return try storage.createExportDocument(for: pack)
     }
+
+#if DEBUG
+    /// (DEBUG-ONLY) Exports the main user store as a new, shareable pack.
+    /// This is intended for developer use, allowing the creation of packs from user data.
+    /// - Parameters:
+    ///   - title: The title for the new pack.
+    ///   - version: The version number for the new pack.
+    /// - Returns: A tuple containing the exportable `PackDirectoryDocument` and a suggested filename.
+    public func exportMainStoreAsPack(title: String, version: Int) throws -> (PackDirectoryDocument, String) {
+        let mainStoreURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
+        
+        let newPackMetadata = Pack(
+            id: UUID(),
+            title: title,
+            version: version,
+            databaseFileName: mainStoreURL.lastPathComponent
+        )
+        
+        logger.info("DEBUG: Exporting main store as pack '\(title)' v\(version)")
+        return try storage.createExportDocument(from: mainStoreURL, metadata: newPackMetadata)
+    }
+#endif
 
     /// Retrieves the ModelConfiguration for a specific data source.
     public func configuration(for source: ContainerSource) -> ModelConfiguration? {

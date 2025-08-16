@@ -85,6 +85,29 @@ struct PackStorageManager {
         return (doc, suggestedName)
     }
 
+    /// Creates a document representation of a pack for exporting from a specific store URL.
+    func createExportDocument(from storeURL: URL, metadata: Pack) throws -> (PackDirectoryDocument, String) {
+        var files: [String: Data] = [:]
+
+        // Main database file must exist
+        files[metadata.databaseFileName] = try Data(contentsOf: storeURL)
+        
+        // Include -wal and -shm files if they exist
+        let walURL = URL(fileURLWithPath: storeURL.path + "-wal")
+        if fm.fileExists(atPath: walURL.path) {
+            files[walURL.lastPathComponent] = try Data(contentsOf: walURL)
+        }
+        let shmURL = URL(fileURLWithPath: storeURL.path + "-shm")
+        if fm.fileExists(atPath: shmURL.path) {
+            files[shmURL.lastPathComponent] = try Data(contentsOf: shmURL)
+        }
+
+        let doc = PackDirectoryDocument(manifest: metadata, databaseFiles: files)
+        let suggestedName = sanitizeFilename(metadata.title) + ".pack"
+        
+        return (doc, suggestedName)
+    }
+
     /// Copies the SQLite file set (store, wal, shm) from a source to a destination.
     func copySQLiteSet(from srcMain: URL, to destMain: URL) throws {
         try fm.createDirectory(at: destMain.deletingLastPathComponent(), withIntermediateDirectories: true)

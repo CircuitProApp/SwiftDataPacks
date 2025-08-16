@@ -8,67 +8,132 @@
 import SwiftUI
 import SwiftData
 
+#if canImport(AppKit)
+import AppKit
+#endif
+#if canImport(UIKit)
+import UIKit
+#endif
+
+@MainActor
+private enum ContainerLoadState {
+    case available(ModelContainer)
+    case unavailable
+    case failed(source: ContainerSource, error: Error)
+
+    struct PackNotFoundError: LocalizedError {
+        var errorDescription: String? = "The pack's data files could not be found on disk."
+    }
+}
+
 public struct FilterContainerModifier: ViewModifier {
     @Environment(SwiftDataPackManager.self) private var manager
+    @Environment(\.dismiss) private var dismiss
     
     let sources: [ContainerSource]
     
-    private var containerToShow: ModelContainer? {
-        // Optimization: If only one source is requested, use a pre-built container.
+    private var containerState: ContainerLoadState {
+        guard !sources.isEmpty else {
+            return .unavailable
+        }
+
         if sources.count == 1 {
-            switch sources[0] {
-            case .mainStore:
-                return manager.userContainer
-            case .pack:
-                // For a single pack, we still build temporarily.
-                break
+            let source = sources[0]
+            
+            guard let config = manager.configuration(for: source) else {
+                return .failed(source: source, error: ContainerLoadState.PackNotFoundError())
+            }
+            
+            do {
+                let container = try ModelContainer(for: manager.schema, configurations: [config])
+                return .available(container)
+            } catch {
+                return .failed(source: source, error: error)
             }
         }
 
         var allPossibleSources: [ContainerSource] = [.mainStore]
         allPossibleSources.append(contentsOf: manager.installedPacks.map { .pack(id: $0.id) })
-
-        // Optimization: If all sources are selected, we can use the main container.
         if Set(sources) == Set(allPossibleSources) {
-            return manager.mainContainer
+            return .available(manager.mainContainer)
         }
 
-        // Fallback to the original dynamic building logic if not optimized
         let configurations = sources.compactMap { manager.configuration(for: $0) }
-        guard !configurations.isEmpty else { return nil }
-        return try? ModelContainer(for: manager.schema, configurations: configurations)
+        guard !configurations.isEmpty else { return .unavailable }
+        
+        if let container = try? ModelContainer(for: manager.schema, configurations: configurations) {
+            return .available(container)
+        } else {
+            return .failed(source: .mainStore, error: PackManagerError.buildError("One or more data sources could not be loaded."))
+        }
     }
 
+
     public func body(content: Content) -> some View {
-        if let container = containerToShow {
+        switch containerState {
+        case .available(let container):
             content
                 .modelContainer(container)
-        } else {
+
+        case .unavailable:
             ContentUnavailableView(
                 "No Data Source",
                 systemImage: "questionmark.folder",
                 description: Text("No valid data sources were specified.")
             )
+
+        case .failed(let source, let error):
+            if case .pack(let packID) = source, let pack = manager.installedPacks.first(where: { $0.id == packID }) {
+                ContentUnavailableView {
+                    Label("Failed to Load Pack", systemImage: "exclamationmark.triangle.fill")
+                } description: {
+                    Text("The pack \"\(pack.metadata.title)\" could not be loaded.\n\(error.localizedDescription)")
+                } actions: {
+                    Button("Show Packs Directory", systemImage: "folder") {
+                        showPacksDirectory() // Updated to call the new method
+                    }
+                    
+                    Button("Delete This Pack", role: .destructive) {
+                        Task {
+                            await manager.removePack(id: packID)
+                        }
+                        dismiss()
+                    }
+                }
+            } else {
+                ContentUnavailableView(
+                    "Loading Failed",
+                    systemImage: "xmark.octagon",
+                    description: Text(error.localizedDescription)
+                )
+            }
         }
+    }
+    
+    /// A helper function to open the parent "Packs" directory using the
+    /// appropriate platform-specific API.
+    private func showPacksDirectory() {
+        let url = manager.packsDirectoryURL
+        #if os(macOS)
+        NSWorkspace.shared.open(url)
+        #elseif os(iOS)
+        UIApplication.shared.open(url)
+        #else
+        print("Packs directory location: \(url.path)")
+        #endif
     }
 }
 
+
 extension View {
-    /// Filters the SwiftData environment to use a specific ModelContainer
-    /// composed from one or more data sources.
-    ///
-    /// - Parameter sources: An array of `ContainerSource` items to include.
-    /// - Returns: A view configured with the specified composed container.
     public func filterContainer(for sources: [ContainerSource]) -> some View {
         self.modifier(FilterContainerModifier(sources: sources))
     }
 
-    /// Convenience modifier to filter the SwiftData environment for a single data source.
     public func filterContainer(for source: ContainerSource) -> some View {
         self.modifier(FilterContainerModifier(sources: [source]))
     }
 
-    /// Convenience modifier to filter the SwiftData environment for a variadic list of data sources.
     public func filterContainer(for sources: ContainerSource...) -> some View {
         self.modifier(FilterContainerModifier(sources: sources))
     }

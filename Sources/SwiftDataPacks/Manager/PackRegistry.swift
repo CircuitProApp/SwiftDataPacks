@@ -6,6 +6,9 @@
 //
 
 import Foundation
+import OSLog
+
+private let prLogger = Logger(subsystem: "app.circuitpro.SwiftDataPacks", category: "PackRegistry")
 
 /// Manages the list of installed packs by reading from and writing to a JSON file.
 ///
@@ -21,7 +24,27 @@ class PackRegistry {
     
     init(storeURL: URL) {
         self.storeURL = storeURL
-        self.packs = Self.load(from: storeURL)
+        
+        // 1. Load the list of packs as recorded on disk.
+        let packsFromDisk = Self.load(from: storeURL)
+        
+        // 2. Filter the list, keeping only packs whose directories still exist.
+        let fm = FileManager.default
+        let verifiedPacks = packsFromDisk.filter { pack in
+            let directoryExists = fm.fileExists(atPath: pack.directoryURL.path)
+            if !directoryExists {
+                prLogger.warning("Pack '\(pack.metadata.title)' is in the registry but its directory is missing. It will be removed.")
+            }
+            return directoryExists
+        }
+        
+        self.packs = verifiedPacks
+        
+        // 3. If the verification process removed any packs, save the cleaned-up list back to disk.
+        if verifiedPacks.count < packsFromDisk.count {
+            prLogger.info("Synchronizing registry: removed \(packsFromDisk.count - verifiedPacks.count) missing pack(s).")
+            save()
+        }
     }
 
     /// Adds a pack to the registry and sorts the list.
@@ -48,7 +71,8 @@ class PackRegistry {
             let data = try JSONEncoder().encode(packs)
             try data.write(to: storeURL, options: .atomic)
         } catch {
-            print("FATAL: Could not save the pack registry at \(storeURL.path). Error: \(error)")
+            // Use the logger for consistency
+            prLogger.error("FATAL: Could not save the pack registry at \(self.storeURL.path). Error: \(error)")
         }
     }
     

@@ -1,13 +1,13 @@
 //
 //  PackStore.swift
-//  Test
+//  SwiftDataPacks
 //
 //  Created by Giorgi Tchelidze on 8/15/25.
 //
 
 import Foundation
 
-enum PackStore {
+public enum PackStore {
     private static let key = "installed-packs-v1"
     static func load() -> [PackDescriptor] {
         guard let data = UserDefaults.standard.data(forKey: key),

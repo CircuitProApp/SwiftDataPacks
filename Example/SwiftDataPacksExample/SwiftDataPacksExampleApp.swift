@@ -14,6 +14,8 @@ struct SwiftDataPacksExampleApp: App {
         WindowGroup {
             ContentView()
                 .frame(minWidth: 600, minHeight: 400)
+                .packContainer(for: [], configuration: .init())
+            
         }
     }
 }

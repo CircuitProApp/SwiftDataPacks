@@ -18,14 +18,11 @@ struct ContentView: View {
                 .if(showEditable) {
                     $0.filterContainer(for: .mainStore)
                 }
-             
             Divider()
             PacksView()
         }
     }
 }
-
-
 
 #Preview {
     ContentView()

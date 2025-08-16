@@ -28,7 +28,7 @@ struct AllItemsView: View {
 
             }
         } content: {
-            List(allComponents) { component in
+            List(allComponents, id: \.id) { component in
                 Text(component.name)
             }
         } footer: {
@@ -36,6 +36,12 @@ struct AllItemsView: View {
                 Button("Add New Component") {
                     let newComponent = Component(name: "New component")
                     modelContext.insert(newComponent)
+                    do {
+                        try modelContext.save()
+                    } catch {
+                        // Handle the save error, e.g., by logging it
+                        print("Failed to save new component: \(error)")
+                    }
                 }
                 
             

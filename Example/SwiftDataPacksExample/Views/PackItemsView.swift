@@ -14,22 +14,13 @@ struct PackItemsView: View {
     
     var body: some View {
         VStack {
-            List(components) { component in
+            List(components, id: \.id) { component in
                 VStack(alignment: .leading) {
                     Text(component.name)
                     ForEach(component.footprints) { footprint in
                         Text("• \(footprint.name)").font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
-            }
-            HStack {
-                Button {
-                    let newComponent = Component(name: "Some Component")
-                    modelContext.insert(newComponent)
-                } label: {
-                    Text("Try to add a new component")
-                }
-
             }
         }
         .navigationTitle("Pack Items")

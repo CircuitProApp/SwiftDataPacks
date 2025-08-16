@@ -27,9 +27,6 @@ public final class SwiftDataPackManager {
     private let storage: PackStorageManager
     private let registry: PackRegistry
 
-    // In-memory caches for single-pack containers
-    private var packContainerCache: [String: ModelContainer] = [:]
-
     // MARK: - Initialization
 
     init(for models: [any PersistentModel.Type], config: SwiftDataPackManagerConfiguration) {
@@ -105,7 +102,7 @@ public final class SwiftDataPackManager {
             let fallbackConfig = ModelConfiguration("default", schema: schema, url: fallbackURL, allowsSave: true)
             container = try! ModelContainer(for: schema, configurations: [fallbackConfig])
         }
-        invalidateAllCaches()
+
     }
 }
 
@@ -214,34 +211,6 @@ extension SwiftDataPackManager {
         
         storage.removePackDirectory(at: removedPack.directoryURL)
         print("Removed pack: '\(removedPack.metadata.title)'")
-    }
-
-    /// Creates a temporary, in-memory ModelContainer for a single pack.
-    public func containerForPack(id: UUID, readOnly: Bool = true) -> ModelContainer? {
-        let cacheKey = id.uuidString
-        if let cached = packContainerCache[cacheKey] { return cached }
-
-        guard let pack = registry.packs.first(where: { $0.id == id }) else {
-            print("containerForPack: no pack found with id \(id)")
-            return nil
-        }
-        
-        let allowsSave = readOnly ? false : pack.allowsSave
-        let cfg = ModelConfiguration(pack.id.uuidString, schema: schema, url: pack.storeURL, allowsSave: allowsSave)
-        
-        do {
-            let singleContainer = try ModelContainer(for: schema, configurations: [cfg])
-            packContainerCache[cacheKey] = singleContainer
-            return singleContainer
-        } catch {
-            print("containerForPack(\(id)) failed to open \(pack.storeURL.path): \(String(describing: error))")
-            return nil
-        }
-    }
-    
-    /// Clears any cached single-pack containers.
-    public func invalidateAllCaches() {
-        packContainerCache.removeAll()
     }
 }
 

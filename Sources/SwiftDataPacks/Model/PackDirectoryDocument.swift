@@ -51,3 +51,18 @@ public struct PackDirectoryDocument: FileDocument {
         return FileWrapper(directoryWithFileWrappers: children)
     }
 }
+
+public extension PackDirectoryDocument {
+    func asFileWrapper() throws -> FileWrapper {
+        var children: [String: FileWrapper] = [:]
+
+        let manifestData = try JSONEncoder().encode(manifest)
+        children["manifest.json"] = FileWrapper(regularFileWithContents: manifestData)
+
+        for (name, data) in databaseFiles {
+            children[name] = FileWrapper(regularFileWithContents: data)
+        }
+
+        return FileWrapper(directoryWithFileWrappers: children)
+    }
+}

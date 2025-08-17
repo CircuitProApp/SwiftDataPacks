@@ -13,6 +13,73 @@ import OSLog
 
 private let logger = Logger(subsystem: "app.circuitpro.SwiftDataPacks", category: "SwiftDataPackManager")
 
+// Encapsulates the logic for managing the pending deletions file.
+// Using a file-private enum with static methods allows us to call this logic
+// during the main class's initialization phase without violating Swift's rules.
+fileprivate enum PendingDeletionsManager {
+    static func fileURL(storage: PackStorageManager) -> URL {
+        storage.packsDirectoryURL.appendingPathComponent("pending_deletions.json")
+    }
+
+    static func load(storage: PackStorageManager) -> [UUID] {
+        let url = fileURL(storage: storage)
+        guard let data = try? Data(contentsOf: url),
+              let ids = try? JSONDecoder().decode([UUID].self, from: data)
+        else {
+            return []
+        }
+        return ids
+    }
+
+    static func save(_ ids: [UUID], storage: PackStorageManager) {
+        let url = fileURL(storage: storage)
+        do {
+            let data = try JSONEncoder().encode(ids)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            logger.error("Failed to save pending deletions file: \(error)")
+        }
+    }
+    
+    static func add(id: UUID, storage: PackStorageManager) {
+        var ids = load(storage: storage)
+        if !ids.contains(id) {
+            ids.append(id)
+            save(ids, storage: storage)
+        }
+    }
+
+    static func cleanup(storage: PackStorageManager) {
+        let pendingIDs = Set(load(storage: storage))
+        guard !pendingIDs.isEmpty else { return }
+        
+        let fm = FileManager.default
+        guard let allPackDirs = try? fm.contentsOfDirectory(at: storage.packsDirectoryURL, includingPropertiesForKeys: nil, options: .skipsHiddenFiles) else {
+            return
+        }
+        
+        for dirURL in allPackDirs {
+            guard dirURL.hasDirectoryPath else { continue }
+            
+            let manifestURL = dirURL.appendingPathComponent("manifest.json")
+            guard fm.fileExists(atPath: manifestURL.path),
+                  let data = try? Data(contentsOf: manifestURL),
+                  let metadata = try? JSONDecoder().decode(Pack.self, from: data) else {
+                continue
+            }
+            
+            if pendingIDs.contains(metadata.id) {
+                storage.removePackDirectory(at: dirURL)
+                logger.info("Cleaned up pack '\(metadata.title)' marked for deletion.")
+            }
+        }
+        
+        // Clear the pending deletions list after cleanup
+        save([], storage: storage)
+    }
+}
+
+
 @Observable
 @MainActor
 public final class SwiftDataPackManager {
@@ -70,12 +137,17 @@ public final class SwiftDataPackManager {
             try fm.createDirectory(at: rootURL, withIntermediateDirectories: true)
             logger.info("SwiftDataPackManager root URL: \(self.rootURL.path)")
             
-            // 2. Initialize Delegated Managers
+            // 2. Initialize Storage Manager
             self.storage = PackStorageManager(rootURL: rootURL, schema: schema)
+            
+            // 3. Perform cleanup of packs pending deletion BEFORE loading registry and containers
+            PendingDeletionsManager.cleanup(storage: self.storage)
+            
+            // 4. Initialize Registry
             let registryURL = self.storage.packsDirectoryURL.appendingPathComponent("installed_packs.json")
             self.registry = PackRegistry(storeURL: registryURL)
             
-            // 3. Bootstrap File System & Build Containers
+            // 5. Bootstrap File System & Build Containers
             try self.storage.bootstrap()
             let mainStoreURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
             self.currentUserStoreURL = mainStoreURL
@@ -99,8 +171,8 @@ public final class SwiftDataPackManager {
             throw PackManagerError.initializationFailed(reason: error.localizedDescription)
         }
         
-        // 4. Perform initial cleanup
-        storage.emptyQuarantine()
+        // 6. Perform initial cleanup of the staging directory
+        storage.emptyStagingDirectory()
     }
     
     // MARK: - Public Write API
@@ -126,7 +198,7 @@ public final class SwiftDataPackManager {
         }
         defer { downloadedURL.stopAccessingSecurityScopedResource() }
         
-        let tempInstallDir = storage.quarantineDirectoryURL.appendingPathComponent(UUID().uuidString)
+        let tempInstallDir = storage.stagingDirectoryURL.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: tempInstallDir) }
         
         do {
@@ -157,7 +229,7 @@ public final class SwiftDataPackManager {
                 logger.info("Updating pack '\(metadata.title)' from version \(existingPack.metadata.version) to \(metadata.version)...")
                 
                 let finalDestDir = existingPack.directoryURL
-                let backupDir = storage.quarantineDirectoryURL.appendingPathComponent(UUID().uuidString)
+                let backupDir = storage.stagingDirectoryURL.appendingPathComponent(UUID().uuidString)
 
                 do {
                     // Move the old directory to a temporary backup location.
@@ -203,10 +275,14 @@ public final class SwiftDataPackManager {
         }
     }
     
-    /// Removes a pack by its ID and deletes its directory from disk.
+    /// Marks a pack for deletion. The pack's directory will be removed on the next app launch.
     public func removePack(id: UUID) async {
         guard let removed = registry.remove(id: id) else { return }
         registry.save()
+        
+        // Add the pack to the pending deletions list for cleanup on next launch.
+        // DO NOT touch the files on disk during this operation.
+        PendingDeletionsManager.add(id: id, storage: self.storage)
         
         // Build configs that exclude the removed pack
         let userURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
@@ -216,10 +292,9 @@ public final class SwiftDataPackManager {
             ModelConfiguration($0.id.uuidString, schema: schema, url: $0.storeURL, allowsSave: $0.allowsSave)
         }
         
-        await hotSwapContainers(newUserConfig: newUserCfg, newPackConfigs: newPackCfgs) { [storage] in
-            storage.removePackDirectory(at: removed.directoryURL)
-            logger.info("Removed pack: '\(removed.metadata.title)'")
-        }
+        // Hot-swap the containers.
+        await hotSwapContainers(newUserConfig: newUserCfg, newPackConfigs: newPackCfgs)
+        logger.info("Marked pack '\(removed.metadata.title)' for deletion on next app launch.")
     }
     
     @MainActor

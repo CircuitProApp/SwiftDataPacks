@@ -176,7 +176,7 @@ struct InstallButton: View {
 ```
 
 > [!IMPORTANT]
-> ℹ️ `installPack(from:)` will check for version diff to ensure no duplicates are installed.
+> `installPack(from:)` will check for version diff to ensure no duplicates are installed.
 
 ## Exporting packs
 

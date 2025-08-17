@@ -11,7 +11,7 @@ import SwiftData
 /// Manages the file system storage for all data packs.
 ///
 /// This struct is responsible for creating, deleting, and locating pack directories
-/// and their contents, including the quarantine for pending deletions. It operates purely
+/// and their contents, including a staging area for temporary operations. It operates purely
 /// at the file system level.
 struct PackStorageManager {
     let fm = FileManager.default
@@ -23,9 +23,9 @@ struct PackStorageManager {
         rootURL.appendingPathComponent("Packs", isDirectory: true)
     }
 
-    /// The directory for temporarily holding packs that are pending deletion.
-    var quarantineDirectoryURL: URL {
-        packsDirectoryURL.appendingPathComponent("PendingDeletion", isDirectory: true)
+    /// A directory for temporarily holding files during operations like installs or updates.
+    var stagingDirectoryURL: URL {
+        packsDirectoryURL.appendingPathComponent("Staging", isDirectory: true)
     }
 
     init(rootURL: URL, schema: Schema) {
@@ -33,10 +33,10 @@ struct PackStorageManager {
         self.schema = schema
     }
 
-    /// Ensures the core directories (Packs, Quarantine) exist.
+    /// Ensures the core directories (Packs, Staging) exist.
     func bootstrap() throws {
         try fm.createDirectory(at: packsDirectoryURL, withIntermediateDirectories: true)
-        try fm.createDirectory(at: quarantineDirectoryURL, withIntermediateDirectories: true)
+        try fm.createDirectory(at: stagingDirectoryURL, withIntermediateDirectories: true)
     }
 
     /// Creates a new, empty, and uniquely named directory for a pack.
@@ -69,7 +69,7 @@ struct PackStorageManager {
     /// Creates a document representation of a pack for exporting.
     func createExportDocument(for pack: InstalledPack) throws -> (PackDirectoryDocument, String) {
         let storeURL = pack.storeURL
-        var files: [String: Data] = [:]
+        var files: [String: Data] = [: ]
 
         // Main database file must exist
         files[pack.metadata.databaseFileName] = try Data(contentsOf: storeURL)
@@ -92,7 +92,7 @@ struct PackStorageManager {
 
     /// Creates a document representation of a pack for exporting from a specific store URL.
     func createExportDocument(from storeURL: URL, metadata: Pack) throws -> (PackDirectoryDocument, String) {
-        var files: [String: Data] = [:]
+        var files: [String: Data] = [: ]
 
         // Main database file must exist
         files[metadata.databaseFileName] = try Data(contentsOf: storeURL)
@@ -142,20 +142,20 @@ struct PackStorageManager {
         if fm.fileExists(atPath: shm.path) { try? fm.removeItem(at: shm) }
     }
 
-    /// Removes an entire pack directory. If removal fails, moves it to quarantine.
+    /// Removes an entire pack directory. If removal fails, moves it to the staging area.
     func removePackDirectory(at dir: URL) {
         guard fm.fileExists(atPath: dir.path) else { return }
         do {
             try fm.removeItem(at: dir)
         } catch {
-            let dest = quarantineDirectoryURL.appendingPathComponent(dir.lastPathComponent)
+            let dest = stagingDirectoryURL.appendingPathComponent(dir.lastPathComponent)
             try? fm.moveItem(at: dir, to: dest)
         }
     }
 
-    /// Empties the quarantine directory.
-    func emptyQuarantine() {
-        guard let items = try? fm.contentsOfDirectory(at: quarantineDirectoryURL, includingPropertiesForKeys: nil) else { return }
+    /// Empties the staging directory.
+    func emptyStagingDirectory() {
+        guard let items = try? fm.contentsOfDirectory(at: stagingDirectoryURL, includingPropertiesForKeys: nil) else { return }
         for item in items {
             try? fm.removeItem(at: item)
         }
@@ -175,3 +175,4 @@ struct PackStorageManager {
         return trimmed.isEmpty ? "Pack" : trimmed
     }
 }
+

@@ -97,7 +97,8 @@ struct EditorView: View {
     }
 }
 ```
-> [!INFORMATION]
+
+> [!IMPORTANT]
 > Calling CRUD functions on `@UserContext` auto saves if there are real updates, so no need to save it again.
 
 > [!WARNING]
@@ -173,7 +174,8 @@ struct InstallButton: View {
     }
 }
 ```
-> [!INFORMATION]
+
+> [!IMPORTANT]
 > ℹ️ `installPack(from:)` will check for version diff to ensure no duplicates are installed.
 
 ## Exporting packs

@@ -86,7 +86,7 @@ public final class SwiftDataPackManager {
     // MARK: - Public Containers
     
     /// A read-write container for the user's data ONLY. Use for all insertions via `performWrite`.
-    private(set) var userContainer: ModelContainer
+    public private(set) var userContainer: ModelContainer
     
     /// A read-only container for all installed packs ONLY.
     private(set) var packsContainer: ModelContainer

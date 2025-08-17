@@ -118,7 +118,7 @@ public final class SwiftDataPackManager {
     
     // MARK: - Pack Management
     
-    /// Installs a new data pack from a source folder URL.
+    /// Installs a new data pack from a source folder URL, or updates an existing one.
     public func installPack(from downloadedURL: URL, allowsSave: Bool = false) {
         guard downloadedURL.startAccessingSecurityScopedResource() else {
             logger.error("Install failed: Could not gain security-scoped access to the pack folder.")
@@ -146,18 +146,58 @@ public final class SwiftDataPackManager {
             // ** ID Collision Check **
             try checkForIDCollisions(with: tempStoreURL)
             
-            // Get a unique destination URL without creating the directory.
-            let finalDestDir = try storage.getUniquePackDirectoryURL(for: metadata)
-            
-            // Rename the fully-formed temporary directory to its final destination.
-            try FileManager.default.moveItem(at: tempInstallDir, to: finalDestDir)
-            
-            let newPack = InstalledPack(metadata: metadata, directoryURL: finalDestDir, allowsSave: allowsSave)
-            registry.add(newPack)
-            registry.save()
-            
-            reloadAllContainers()
-            logger.info("Successfully installed pack: '\(metadata.title)'")
+            // Check if a pack with the same ID already exists to perform an update.
+            if let existingPack = registry.packs.first(where: { $0.id == metadata.id }) {
+                // UPDATE an existing pack
+                guard metadata.version > existingPack.metadata.version else {
+                    logger.warning("Skipping install: Pack '\(metadata.title)' version (\(metadata.version)) is not newer than installed version (\(existingPack.metadata.version)).")
+                    return
+                }
+                
+                logger.info("Updating pack '\(metadata.title)' from version \(existingPack.metadata.version) to \(metadata.version)...")
+                
+                let finalDestDir = existingPack.directoryURL
+                let backupDir = storage.quarantineDirectoryURL.appendingPathComponent(UUID().uuidString)
+
+                do {
+                    // Move the old directory to a temporary backup location.
+                    try FileManager.default.moveItem(at: finalDestDir, to: backupDir)
+                    
+                    // Move the new directory into its final place.
+                    try FileManager.default.moveItem(at: tempInstallDir, to: finalDestDir)
+                    
+                    // Clean up the backup.
+                    try? FileManager.default.removeItem(at: backupDir)
+                    
+                } catch {
+                    // If the move fails, try to restore the backup.
+                    try? FileManager.default.moveItem(at: backupDir, to: finalDestDir)
+                    throw error // Re-throw the error to be caught by the outer handler.
+                }
+                
+                // Update the registry with the new metadata, preserving the existing directory URL and allowsSave setting.
+                let updatedPack = InstalledPack(metadata: metadata, directoryURL: finalDestDir, allowsSave: existingPack.allowsSave)
+                registry.add(updatedPack)
+                registry.save()
+                
+                reloadAllContainers()
+                logger.info("Successfully updated pack: '\(metadata.title)'")
+                
+            } else {
+                // INSTALL a new pack
+                // Get a unique destination URL without creating the directory.
+                let finalDestDir = try storage.getUniquePackDirectoryURL(for: metadata)
+                
+                // Rename the fully-formed temporary directory to its final destination.
+                try FileManager.default.moveItem(at: tempInstallDir, to: finalDestDir)
+                
+                let newPack = InstalledPack(metadata: metadata, directoryURL: finalDestDir, allowsSave: allowsSave)
+                registry.add(newPack)
+                registry.save()
+                
+                reloadAllContainers()
+                logger.info("Successfully installed pack: '\(metadata.title)'")
+            }
         } catch {
             logger.error("installPack failed: \(String(describing: error))")
         }

@@ -13,10 +13,10 @@ public struct SwiftDataPackContainerModifier: ViewModifier {
     @State private var result: Result<SwiftDataPackManager, Error>
     let defaultSources: [ContainerSource]?
 
-    public init(models: [any PersistentModel.Type], configuration: SwiftDataPackManagerConfiguration, defaultSources: [ContainerSource]?) {
+    public init(models: [any PersistentModel.Type], defaultSources: [ContainerSource]?) {
         self.defaultSources = defaultSources
         do {
-            let manager = try SwiftDataPackManager(for: models, config: configuration)
+            let manager = try SwiftDataPackManager(for: models)
             _result = State(wrappedValue: .success(manager))
         } catch {
             _result = State(wrappedValue: .failure(error))
@@ -49,9 +49,8 @@ public struct SwiftDataPackContainerModifier: ViewModifier {
 public extension View {
     func packContainer(
         for models: [any PersistentModel.Type],
-        configuration: SwiftDataPackManagerConfiguration = .init(),
         defaultFilter sources: [ContainerSource]? = nil
     ) -> some View {
-        self.modifier(SwiftDataPackContainerModifier(models: models, configuration: configuration, defaultSources: sources))
+        self.modifier(SwiftDataPackContainerModifier(models: models, defaultSources: sources))
     }
 }

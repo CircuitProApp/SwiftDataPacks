@@ -90,13 +90,11 @@ public struct FilterContainerModifier: ViewModifier {
                     Text("The pack \"\(pack.metadata.title)\" could not be loaded.\n\(error.localizedDescription)")
                 } actions: {
                     Button("Show Packs Directory", systemImage: "folder") {
-                        showPacksDirectory() // Updated to call the new method
+                        showPacksDirectory()
                     }
                     
                     Button("Delete This Pack", role: .destructive) {
-                        Task {
-                            await manager.removePack(id: packID)
-                        }
+                        manager.removePack(id: packID)
                         dismiss()
                     }
                 }

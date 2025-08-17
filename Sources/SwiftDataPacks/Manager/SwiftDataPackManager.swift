@@ -276,7 +276,7 @@ public final class SwiftDataPackManager {
     }
     
     /// Marks a pack for deletion. The pack's directory will be removed on the next app launch.
-    public func removePack(id: UUID) async {
+    public func removePack(id: UUID) {
         guard let removed = registry.remove(id: id) else { return }
         registry.save()
         
@@ -293,7 +293,7 @@ public final class SwiftDataPackManager {
         }
         
         // Hot-swap the containers.
-        await hotSwapContainers(newUserConfig: newUserCfg, newPackConfigs: newPackCfgs)
+        hotSwapContainers(newUserConfig: newUserCfg, newPackConfigs: newPackCfgs)
         logger.info("Marked pack '\(removed.metadata.title)' for deletion on next app launch.")
     }
     
@@ -302,7 +302,7 @@ public final class SwiftDataPackManager {
         newUserConfig: ModelConfiguration,
         newPackConfigs: [ModelConfiguration],
         afterSwap fileOperation: (() -> Void)? = nil
-    ) async {
+    ) {
         do {
             // Prebuild
             let newUser = try ModelContainer(for: schema, configurations: [newUserConfig])
@@ -316,10 +316,7 @@ public final class SwiftDataPackManager {
                 self.mainContainer = newMain
             }
             
-            // Give SwiftUI a tick to drop old container references
-            await Task.yield()
-            
-            // Safe to touch disk now
+            // The file operation can now run immediately. Callers must ensure it's safe.
             fileOperation?()
         } catch {
             logger.critical("Hot swap failed: \(error.localizedDescription)")
@@ -423,45 +420,41 @@ public final class SwiftDataPackManager {
     }
     
     /// (DEBUG-ONLY) Deletes the entire user data store from disk and reloads the containers.
-    public func DEBUG_deleteUserContainer() async {
-        logger.warning("DEBUG: Deleting user container (seamless)...")
+    /// The old store is moved to the staging directory for cleanup on the next app launch.
+    public func DEBUG_deleteUserContainer() {
+        logger.warning("DEBUG: Deleting user container...")
         
-        let canonical = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
-        let tmpDir = canonical.deletingLastPathComponent().appendingPathComponent("tmp-\(UUID().uuidString)", isDirectory: true)
-        let tmpURL = tmpDir.appendingPathComponent(canonical.lastPathComponent)
+        let canonicalUserStoreURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
+        let userStoreParentDir = canonicalUserStoreURL.deletingLastPathComponent()
+        
+        // Define a destination for the old store in the staging area.
+        let backupDir = storage.stagingDirectoryURL.appendingPathComponent("user-db-backup-\(UUID().uuidString)")
         
         do {
-            try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
-            try Self.ensureStoreExists(at: tmpURL, schema: schema) // empty on-disk store
+            // 1. Move the entire user store directory to the staging area for later deletion.
+            if FileManager.default.fileExists(atPath: userStoreParentDir.path) {
+                try FileManager.default.moveItem(at: userStoreParentDir, to: backupDir)
+            }
             
-            // Route all new configs (including FilterContainerModifier) to the temp store
-            self.currentUserStoreURL = tmpURL
+            // 2. Create a new, empty store at the original location.
+            try Self.ensureStoreExists(at: canonicalUserStoreURL, schema: schema)
             
+            // 3. Hot-swap to the new, empty store.
+            let newUserCfg = ModelConfiguration(config.mainStoreName, schema: schema, url: canonicalUserStoreURL, allowsSave: true)
             let packCfgs = registry.packs.map {
                 ModelConfiguration($0.id.uuidString, schema: schema, url: $0.storeURL, allowsSave: $0.allowsSave)
             }
-            let tmpUserCfg = ModelConfiguration(config.mainStoreName, schema: schema, url: tmpURL, allowsSave: true)
             
-            // 1) Hot-swap UI to temp store
-            await hotSwapContainers(newUserConfig: tmpUserCfg, newPackConfigs: packCfgs)
+            hotSwapContainers(newUserConfig: newUserCfg, newPackConfigs: packCfgs)
             
-            // Let old container deallocate and close FDs
-            await Task.yield()
+            logger.info("DEBUG: User store has been reset. Old data will be purged on next launch.")
             
-            // 2) Make sure canonical is gone, then copy (not move) temp -> canonical
-            storage.removeSQLiteSet(at: canonical)
-            try storage.copySQLiteSet(from: tmpURL, to: canonical)
-            
-            // 3) Hot-swap back to canonical store
-            let canonicalCfg = ModelConfiguration(config.mainStoreName, schema: schema, url: canonical, allowsSave: true)
-            self.currentUserStoreURL = canonical
-            await hotSwapContainers(newUserConfig: canonicalCfg, newPackConfigs: packCfgs)
-            
-            // 4) Clean up temp
-            try? FileManager.default.removeItem(at: tmpDir)
-            logger.info("DEBUG: User store reset completed without file handle violations.")
         } catch {
             logger.error("DEBUG: delete user container failed: \(error.localizedDescription)")
+            // Attempt to restore the backup if something went wrong.
+            if !FileManager.default.fileExists(atPath: userStoreParentDir.path) {
+                try? FileManager.default.moveItem(at: backupDir, to: userStoreParentDir)
+            }
         }
     }
 #endif

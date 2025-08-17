@@ -170,7 +170,7 @@ struct InstallButton: View {
     }
 
     func remove(_ packID: UUID) {
-        Task { await manager.removePack(id: packID) }
+        manager.removePack(id: packID)
     }
 }
 ```

@@ -64,7 +64,7 @@ struct AllItemsView: View {
                     exportUserStore()
                 }
                 Button("Delete User") {
-                    Task { await manager.DEBUG_deleteUserContainer() }
+                    manager.DEBUG_deleteUserContainer()
                 }
             }
         }

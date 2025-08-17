@@ -111,7 +111,7 @@ struct PacksView: View {
             .help("Export Pack")
             
             Button("Remove", systemImage: "trash", role: .destructive) {
-                Task { await manager.removePack(id: pack.id) }
+                manager.removePack(id: pack.id) 
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)

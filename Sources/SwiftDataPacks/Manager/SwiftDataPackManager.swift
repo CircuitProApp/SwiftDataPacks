@@ -133,9 +133,10 @@ public final class SwiftDataPackManager {
         
         do {
             let appSupportURL = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            self.rootURL = appSupportURL.appendingPathComponent(appIdentifier, isDirectory: true)
+            let baseAppURL = appSupportURL.appendingPathComponent(appIdentifier, isDirectory: true)
+            self.rootURL = baseAppURL.appendingPathComponent("SwiftDataPacks", isDirectory: true)
             try fm.createDirectory(at: rootURL, withIntermediateDirectories: true)
-            logger.info("SwiftDataPackManager root URL: \(self.rootURL.path)")
+            logger.info("SwiftDataPacks root URL: \(self.rootURL.path)")
             
             // 2. Initialize Storage Manager
             self.storage = PackStorageManager(rootURL: rootURL, schema: schema)
@@ -149,7 +150,7 @@ public final class SwiftDataPackManager {
             
             // 5. Bootstrap File System & Build Containers
             try self.storage.bootstrap()
-            let mainStoreURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
+            let mainStoreURL = Self.primaryStoreURL(for: config.mainStoreName, storage: self.storage)
             self.currentUserStoreURL = mainStoreURL
             try Self.ensureStoreExists(at: mainStoreURL, schema: schema)
             
@@ -285,7 +286,7 @@ public final class SwiftDataPackManager {
         PendingDeletionsManager.add(id: id, storage: self.storage)
         
         // Build configs that exclude the removed pack
-        let userURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
+        let userURL = Self.primaryStoreURL(for: config.mainStoreName, storage: self.storage)
         let newUserCfg = ModelConfiguration(config.mainStoreName, schema: schema, url: userURL, allowsSave: true)
         
         let newPackCfgs = registry.packs.map {
@@ -406,7 +407,7 @@ public final class SwiftDataPackManager {
     ///   - version: The version number for the new pack.
     /// - Returns: A tuple containing the exportable `PackDirectoryDocument` and a suggested filename.
     public func exportMainStoreAsPack(title: String, version: Int) throws -> (PackDirectoryDocument, String) {
-        let mainStoreURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
+        let mainStoreURL = Self.primaryStoreURL(for: config.mainStoreName, storage: self.storage)
         
         let newPackMetadata = Pack(
             id: UUID(),
@@ -424,8 +425,7 @@ public final class SwiftDataPackManager {
     public func DEBUG_deleteUserContainer() {
         logger.warning("DEBUG: Deleting user container...")
         
-        let canonicalUserStoreURL = Self.primaryStoreURL(for: config.mainStoreName, rootURL: rootURL)
-        let userStoreParentDir = canonicalUserStoreURL.deletingLastPathComponent()
+        let userStoreParentDir = storage.mainStoreDirectoryURL
         
         // Define a destination for the old store in the staging area.
         let backupDir = storage.stagingDirectoryURL.appendingPathComponent("user-db-backup-\(UUID().uuidString)")
@@ -437,6 +437,7 @@ public final class SwiftDataPackManager {
             }
             
             // 2. Create a new, empty store at the original location.
+            let canonicalUserStoreURL = Self.primaryStoreURL(for: config.mainStoreName, storage: self.storage)
             try Self.ensureStoreExists(at: canonicalUserStoreURL, schema: schema)
             
             // 3. Hot-swap to the new, empty store.
@@ -495,8 +496,8 @@ public final class SwiftDataPackManager {
         }
     }
     
-    static func primaryStoreURL(for name: String, rootURL: URL) -> URL {
-        let storeDir = rootURL.appendingPathComponent(name, isDirectory: true)
+    static func primaryStoreURL(for name: String, storage: PackStorageManager) -> URL {
+        let storeDir = storage.mainStoreDirectoryURL
         return storeDir.appendingPathComponent("\(name).store")
     }
     

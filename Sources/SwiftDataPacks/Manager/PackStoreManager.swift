@@ -15,9 +15,16 @@ import SwiftData
 /// at the file system level.
 struct PackStorageManager {
     let fm = FileManager.default
+    
+    /// The root directory for all SwiftDataPacks content (e.g., .../Application Support/{AppID}/SwiftDataPacks).
     let rootURL: URL
     let schema: Schema
 
+    /// The directory where the main user store is located.
+    var mainStoreDirectoryURL: URL {
+        rootURL.appendingPathComponent("Main", isDirectory: true)
+    }
+    
     /// The top-level directory where all pack folders are stored.
     var packsDirectoryURL: URL {
         rootURL.appendingPathComponent("Packs", isDirectory: true)
@@ -25,7 +32,7 @@ struct PackStorageManager {
 
     /// A directory for temporarily holding files during operations like installs or updates.
     var stagingDirectoryURL: URL {
-        packsDirectoryURL.appendingPathComponent("Staging", isDirectory: true)
+        rootURL.appendingPathComponent("Staging", isDirectory: true)
     }
 
     init(rootURL: URL, schema: Schema) {
@@ -33,8 +40,9 @@ struct PackStorageManager {
         self.schema = schema
     }
 
-    /// Ensures the core directories (Packs, Staging) exist.
+    /// Ensures the core directories (Main, Packs, Staging) exist.
     func bootstrap() throws {
+        try fm.createDirectory(at: mainStoreDirectoryURL, withIntermediateDirectories: true)
         try fm.createDirectory(at: packsDirectoryURL, withIntermediateDirectories: true)
         try fm.createDirectory(at: stagingDirectoryURL, withIntermediateDirectories: true)
     }
@@ -69,7 +77,7 @@ struct PackStorageManager {
     /// Creates a document representation of a pack for exporting.
     func createExportDocument(for pack: InstalledPack) throws -> (PackDirectoryDocument, String) {
         let storeURL = pack.storeURL
-        var files: [String: Data] = [: ]
+        var files: [String: Data] = [:]
 
         // Main database file must exist
         files[pack.metadata.databaseFileName] = try Data(contentsOf: storeURL)
@@ -92,7 +100,7 @@ struct PackStorageManager {
 
     /// Creates a document representation of a pack for exporting from a specific store URL.
     func createExportDocument(from storeURL: URL, metadata: Pack) throws -> (PackDirectoryDocument, String) {
-        var files: [String: Data] = [: ]
+        var files: [String: Data] = [:]
 
         // Main database file must exist
         files[metadata.databaseFileName] = try Data(contentsOf: storeURL)

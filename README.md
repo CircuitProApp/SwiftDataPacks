@@ -181,7 +181,8 @@ struct InstallButton: View {
     func remove(_ packID: UUID) {
         manager.removePack(id: packID)
     }
-}```
+}
+```
 
 > [!IMPORTANT]
 > `installPack(from:)` will automatically check the pack's version. If a pack with the same ID is already installed, it will perform an update instead of installing a duplicate.

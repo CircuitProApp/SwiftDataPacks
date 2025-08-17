@@ -13,7 +13,7 @@ Many apps need a single unified view of data while guaranteeing that user edits 
 - SwiftUI is required for the view modifiers and property wrappers
 
 > [!WARNING]
-> ⚠️ SwiftDataPacks uses multiple model containers, but since SwiftData is built on Core Data and doesn’t natively support this pattern, performance may degrade with many packs and unexpected issues can occur. This is a temporary solution for CircuitPro.
+> SwiftDataPacks uses multiple model containers, but since SwiftData is built on Core Data and doesn’t natively support this pattern, performance may degrade with many packs and unexpected issues can occur. This is a temporary solution for CircuitPro.
 
 ## Installation
 
@@ -97,9 +97,11 @@ struct EditorView: View {
     }
 }
 ```
-> ℹ️ Calling CRUD functions on `@UserContext` auto saves if there are real updates, so no need to save it again.
+> [!INFORMATION]
+> Calling CRUD functions on `@UserContext` auto saves if there are real updates, so no need to save it again.
+
 > [!WARNING]
-> ⚠️ Don't use `@Environment(\.modelContext)` anymore as this will lead to undefined results (possible write attempt to a pack).
+> Don't use `@Environment(\.modelContext)` anymore as this will lead to undefined results (possible write attempt to a pack).
 
 ## Transactional write helper for complex edits
 
@@ -171,6 +173,7 @@ struct InstallButton: View {
     }
 }
 ```
+> [!INFORMATION]
 > ℹ️ `installPack(from:)` will check for version diff to ensure no duplicates are installed.
 
 ## Exporting packs

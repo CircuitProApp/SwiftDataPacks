@@ -51,7 +51,7 @@ struct MyApp: App {
 ```
 
 > [!WARNING]
-> Do not use the default `.modelContainer()` anymore, it will lead to unexpected results.
+> Do not use the default `.modelContainer()` in conjunction with `.packContainer()`, it will lead to unexpected results.
 
 ## Reading from the Unified Store
 

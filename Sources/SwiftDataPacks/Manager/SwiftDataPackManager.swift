@@ -13,70 +13,6 @@ import OSLog
 
 private let logger = Logger(subsystem: "app.circuitpro.SwiftDataPacks", category: "SwiftDataPackManager")
 
-// Encapsulates the logic for managing the pending deletions file.
-fileprivate enum PendingDeletionsManager {
-    static func fileURL(storage: PackStorageManager) -> URL {
-        storage.packsDirectoryURL.appendingPathComponent("pending_deletions.json")
-    }
-
-    static func load(storage: PackStorageManager) -> [UUID] {
-        let url = fileURL(storage: storage)
-        guard let data = try? Data(contentsOf: url),
-              let ids = try? JSONDecoder().decode([UUID].self, from: data)
-        else {
-            return []
-        }
-        return ids
-    }
-
-    static func save(_ ids: [UUID], storage: PackStorageManager) {
-        let url = fileURL(storage: storage)
-        do {
-            let data = try JSONEncoder().encode(ids)
-            try data.write(to: url, options: .atomic)
-        } catch {
-            logger.error("Failed to save pending deletions file: \(error)")
-        }
-    }
-    
-    static func add(id: UUID, storage: PackStorageManager) {
-        var ids = load(storage: storage)
-        if !ids.contains(id) {
-            ids.append(id)
-            save(ids, storage: storage)
-        }
-    }
-
-    static func cleanup(storage: PackStorageManager) {
-        let pendingIDs = Set(load(storage: storage))
-        guard !pendingIDs.isEmpty else { return }
-        
-        let fm = FileManager.default
-        guard let allPackDirs = try? fm.contentsOfDirectory(at: storage.packsDirectoryURL, includingPropertiesForKeys: nil, options: .skipsHiddenFiles) else {
-            return
-        }
-        
-        for dirURL in allPackDirs {
-            guard dirURL.hasDirectoryPath else { continue }
-            
-            let manifestURL = dirURL.appendingPathComponent("manifest.json")
-            guard fm.fileExists(atPath: manifestURL.path),
-                  let data = try? Data(contentsOf: manifestURL),
-                  let metadata = try? JSONDecoder().decode(Pack.self, from: data) else {
-                continue
-            }
-            
-            if pendingIDs.contains(metadata.id) {
-                storage.removePackDirectory(at: dirURL)
-                logger.info("Cleaned up pack '\(metadata.title)' marked for deletion.")
-            }
-        }
-        
-        save([], storage: storage)
-    }
-}
-
-
 @Observable
 @MainActor
 public final class SwiftDataPackManager {
@@ -108,26 +44,46 @@ public final class SwiftDataPackManager {
     private let storage: PackStorageManager
     private let registry: PackRegistry
     
-    // MARK: - Initialization
+    // MARK: - Static Helpers
     
-    public init(for models: [any PersistentModel.Type]) throws {
-        self.schema = Schema(models)
-        self.modelTypes = models
-        
+    /// Determines the root directory for all SwiftDataPacks content.
+    static func getRootURL() -> URL? {
         let fm = FileManager.default
         guard let appIdentifier = Bundle.main.bundleIdentifier ?? Bundle.main.infoDictionary?[kCFBundleNameKey as String] as? String else {
-            throw PackManagerError.initializationFailed(reason: "Cannot determine app bundle identifier.")
+            logger.error("Cannot determine app bundle identifier.")
+            return nil
         }
         
         do {
             let appSupportURL = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             let baseAppURL = appSupportURL.appendingPathComponent(appIdentifier, isDirectory: true)
-            self.rootURL = baseAppURL.appendingPathComponent("SwiftDataPacks", isDirectory: true)
+            return baseAppURL.appendingPathComponent("SwiftDataPacks", isDirectory: true)
+        } catch {
+            logger.error("Could not create application support directory URL: \(error)")
+            return nil
+        }
+    }
+    
+    // MARK: - Initialization
+    
+    public init(for models: [any PersistentModel.Type]) throws {
+        // Ensure the lifecycle observer is initialized to handle one-time launch tasks.
+        _ = LifecycleObserver.shared
+        
+        self.schema = Schema(models)
+        self.modelTypes = models
+        
+        let fm = FileManager.default
+        guard let rootURL = Self.getRootURL() else {
+            throw PackManagerError.initializationFailed(reason: "Cannot determine SwiftDataPacks root URL.")
+        }
+        self.rootURL = rootURL
+
+        do {
             try fm.createDirectory(at: rootURL, withIntermediateDirectories: true)
             logger.info("SwiftDataPacks root URL: \(self.rootURL.path)")
             
             self.storage = PackStorageManager(rootURL: rootURL, schema: schema)
-            PendingDeletionsManager.cleanup(storage: self.storage)
             
             let registryURL = self.storage.packsDirectoryURL.appendingPathComponent("installed_packs.json")
             self.registry = PackRegistry(storeURL: registryURL)

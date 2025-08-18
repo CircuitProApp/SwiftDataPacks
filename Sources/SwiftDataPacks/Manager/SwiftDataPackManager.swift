@@ -125,30 +125,39 @@ public final class SwiftDataPackManager {
     // MARK: - Pack Management
     
     public func installPack(from downloadedURL: URL, allowsSave: Bool = false) {
-        guard downloadedURL.startAccessingSecurityScopedResource() else {
-            logger.error("Install failed: Could not gain security-scoped access to the pack folder.")
-            return
+        // Attempt to gain security-scoped access. This will return true for external
+        // files and false for internal files.
+        let needsSecurityScopedAccess = downloadedURL.startAccessingSecurityScopedResource()
+        
+        defer {
+            // Only stop accessing if we successfully started.
+            if needsSecurityScopedAccess {
+                downloadedURL.stopAccessingSecurityScopedResource()
+            }
         }
-        defer { downloadedURL.stopAccessingSecurityScopedResource() }
         
         let tempInstallDir = storage.stagingDirectoryURL.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: tempInstallDir) }
         
         do {
+            // Create the temporary directory.
             try FileManager.default.createDirectory(at: tempInstallDir, withIntermediateDirectories: true)
             
-            let manifestURL = downloadedURL.appendingPathComponent("manifest.json")
+            let fileManager = FileManager.default
+            let contents = try fileManager.contentsOfDirectory(at: downloadedURL, includingPropertiesForKeys: nil)
+            for itemURL in contents {
+                try fileManager.copyItem(at: itemURL, to: tempInstallDir.appendingPathComponent(itemURL.lastPathComponent))
+            }
+            
+            // Now, all subsequent operations will safely use the files inside tempInstallDir.
+            let manifestURL = tempInstallDir.appendingPathComponent("manifest.json")
             let manifestData = try Data(contentsOf: manifestURL)
             let metadata = try JSONDecoder().decode(Pack.self, from: manifestData)
             
-            let sourceDBURL = downloadedURL.appendingPathComponent(metadata.databaseFileName)
-            let tempStoreURL = tempInstallDir.appendingPathComponent(metadata.databaseFileName)
+            let storeURL = tempInstallDir.appendingPathComponent(metadata.databaseFileName)
             
-            try storage.copySQLiteSet(from: sourceDBURL, to: tempStoreURL)
-            try manifestData.write(to: tempInstallDir.appendingPathComponent("manifest.json"), options: .atomic)
-            try storage.validateStore(at: tempStoreURL)
-            
-            try checkForIDCollisions(with: tempStoreURL)
+            try storage.validateStore(at: storeURL)
+            try checkForIDCollisions(with: storeURL)
             
             if let existingPack = registry.packs.first(where: { $0.id == metadata.id }) {
                 guard metadata.version > existingPack.metadata.version else {
@@ -161,32 +170,31 @@ public final class SwiftDataPackManager {
                 let backupDir = storage.stagingDirectoryURL.appendingPathComponent(UUID().uuidString)
 
                 do {
-                    try FileManager.default.moveItem(at: finalDestDir, to: backupDir)
-                    try FileManager.default.moveItem(at: tempInstallDir, to: finalDestDir)
-                    try? FileManager.default.removeItem(at: backupDir)
+                    try fileManager.moveItem(at: finalDestDir, to: backupDir)
+                    try fileManager.moveItem(at: tempInstallDir, to: finalDestDir)
+                    try? fileManager.removeItem(at: backupDir)
                 } catch {
-                    try? FileManager.default.moveItem(at: backupDir, to: finalDestDir)
+                    // If the update fails, try to restore the backup.
+                    try? fileManager.moveItem(at: backupDir, to: finalDestDir)
                     throw error
                 }
                 
                 let updatedPack = InstalledPack(metadata: metadata, directoryURL: finalDestDir, allowsSave: existingPack.allowsSave)
                 registry.add(updatedPack)
-                registry.save()
-                
-                reloadAllContainers()
-                logger.info("Successfully updated pack: '\(metadata.title)'")
                 
             } else {
                 let finalDestDir = try storage.getUniquePackDirectoryURL(for: metadata)
-                try FileManager.default.moveItem(at: tempInstallDir, to: finalDestDir)
+                try fileManager.moveItem(at: tempInstallDir, to: finalDestDir)
                 
                 let newPack = InstalledPack(metadata: metadata, directoryURL: finalDestDir, allowsSave: allowsSave)
                 registry.add(newPack)
-                registry.save()
-                
-                reloadAllContainers()
-                logger.info("Successfully installed pack: '\(metadata.title)'")
             }
+            
+            // Save changes to the registry and reload containers
+            registry.save()
+            reloadAllContainers()
+            logger.info("Successfully installed or updated pack: '\(metadata.title)'")
+            
         } catch {
             logger.error("installPack failed: \(String(describing: error))")
         }

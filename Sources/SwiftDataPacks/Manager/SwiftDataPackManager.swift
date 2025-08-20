@@ -104,6 +104,41 @@ public final class SwiftDataPackManager {
         storage.emptyStagingDirectory()
     }
     
+    /// A special, private initializer for creating a non-functional, in-memory placeholder
+    /// suitable for SwiftUI Previews or EnvironmentKey default values.
+    private init(forPreview models: [any PersistentModel.Type] = []) {
+        let previewSchema = Schema(models)
+        let dummyURL = URL(fileURLWithPath: "/dev/null")
+        let previewMainStoreURL = dummyURL.appendingPathComponent("Preview.store")
+        
+        // Now, assign values to all stored properties using the local constants.
+        self.schema = previewSchema
+        self.rootURL = dummyURL
+        self.currentUserStoreURL = previewMainStoreURL
+        
+        self.storage = PackStorageManager(
+            rootURL: dummyURL,
+            schema: previewSchema
+        )
+        
+        self.registry = PackRegistry(
+            storeURL: dummyURL.appendingPathComponent("registry.json")
+        )
+        
+        self.containerProvider = ModelContainerProvider(
+            schema: previewSchema,
+            userStoreURL: previewMainStoreURL,
+            mainStoreIdentifier: "Preview"
+        )
+
+        do {
+            let config = ModelConfiguration(isStoredInMemoryOnly: true)
+            self.mainContainer = try ModelContainer(for: previewSchema, configurations: [config])
+        } catch {
+            fatalError("Failed to create a preview ModelContainer: \(error.localizedDescription)")
+        }
+    }
+    
     // MARK: - Public Write API
     
     public func performWrite(_ block: (ModelContext) throws -> Void) throws {

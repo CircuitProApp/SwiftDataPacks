@@ -22,7 +22,7 @@ public final class SwiftDataPackManager {
     // MARK: - Public State
     
     /// The main, composite container of all stores for unified display.
-    private(set) var mainContainer: ModelContainer
+    public private(set) var mainContainer: ModelContainer
     
     public private(set) var currentUserStoreURL: URL
     

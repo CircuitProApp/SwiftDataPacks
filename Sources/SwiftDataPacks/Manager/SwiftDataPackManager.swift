@@ -106,7 +106,7 @@ public final class SwiftDataPackManager {
     
     /// A special, private initializer for creating a non-functional, in-memory placeholder
     /// suitable for SwiftUI Previews or EnvironmentKey default values.
-    private init(forPreview models: [any PersistentModel.Type] = []) {
+    private init(forPreview models: [any PersistentModel.Type]) {
         let previewSchema = Schema(models)
         let dummyURL = URL(fileURLWithPath: "/dev/null")
         let previewMainStoreURL = dummyURL.appendingPathComponent("Preview.store")

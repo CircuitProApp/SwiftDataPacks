@@ -19,14 +19,12 @@ public final class SwiftDataPackManager {
     // MARK: - Constants
     private static let mainStoreName = "database"
     
-    // MARK: - Public Containers
+    // MARK: - Public State
     
     /// The main, composite container of all stores for unified display.
     private(set) var mainContainer: ModelContainer
     
-    private(set) var currentUserStoreURL: URL
-    
-    // MARK: - Public State
+    public private(set) var currentUserStoreURL: URL
     
     public var installedPacks: [InstalledPack] {
         registry.packs
@@ -43,6 +41,7 @@ public final class SwiftDataPackManager {
     private let modelTypes: [any PersistentModel.Type]
     private let storage: PackStorageManager
     private let registry: PackRegistry
+    private let containerProvider: ModelContainerProvider
     
     // MARK: - Static Helpers
     
@@ -67,7 +66,6 @@ public final class SwiftDataPackManager {
     // MARK: - Initialization
     
     public init(for models: [any PersistentModel.Type]) throws {
-        // Ensure the lifecycle observer is initialized to handle one-time launch tasks.
         _ = LifecycleObserver.shared
         
         self.schema = Schema(models)
@@ -93,12 +91,13 @@ public final class SwiftDataPackManager {
             self.currentUserStoreURL = mainStoreURL
             try Self.ensureStoreExists(at: mainStoreURL, schema: schema)
             
-            self.mainContainer = try Self.buildMainContainer(
-                schema: schema,
-                mainStoreURL: mainStoreURL,
-                mainStoreName: Self.mainStoreName,
-                packs: registry.packs
+            self.containerProvider = ModelContainerProvider(
+                schema: self.schema,
+                userStoreURL: mainStoreURL,
+                mainStoreIdentifier: Self.mainStoreName
             )
+            
+            self.mainContainer = try self.containerProvider.buildMainContainer(for: registry.packs)
 
         } catch {
             throw PackManagerError.initializationFailed(reason: error.localizedDescription)
@@ -110,10 +109,10 @@ public final class SwiftDataPackManager {
     // MARK: - Public Write API
     
     public func performWrite(_ block: (ModelContext) throws -> Void) throws {
+        // FIX: Safely unwrap the optional configuration.
         guard let userConfig = configuration(for: .mainStore) else {
-            throw PackManagerError.buildError("Could not create configuration for user store.")
+            throw PackManagerError.buildError("Could not create configuration for the main user store.")
         }
-        
         let writeContainer = try ModelContainer(for: schema, configurations: [userConfig])
         let context = ModelContext(writeContainer)
         try block(context)
@@ -125,78 +124,75 @@ public final class SwiftDataPackManager {
     // MARK: - Pack Management
     
     public func installPack(from downloadedURL: URL, allowsSave: Bool = false) {
-        // Attempt to gain security-scoped access. This will return true for external
-        // files and false for internal files.
-        let needsSecurityScopedAccess = downloadedURL.startAccessingSecurityScopedResource()
-        
-        defer {
-            // Only stop accessing if we successfully started.
-            if needsSecurityScopedAccess {
-                downloadedURL.stopAccessingSecurityScopedResource()
-            }
-        }
-        
-        let tempInstallDir = storage.stagingDirectoryURL.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: tempInstallDir) }
-        
+        var stagedDir: URL?
         do {
-            // Create the temporary directory.
-            try FileManager.default.createDirectory(at: tempInstallDir, withIntermediateDirectories: true)
-            
-            let fileManager = FileManager.default
-            let contents = try fileManager.contentsOfDirectory(at: downloadedURL, includingPropertiesForKeys: nil)
-            for itemURL in contents {
-                try fileManager.copyItem(at: itemURL, to: tempInstallDir.appendingPathComponent(itemURL.lastPathComponent))
-            }
-            
-            // Now, all subsequent operations will safely use the files inside tempInstallDir.
-            let manifestURL = tempInstallDir.appendingPathComponent("manifest.json")
-            let manifestData = try Data(contentsOf: manifestURL)
-            let metadata = try JSONDecoder().decode(Pack.self, from: manifestData)
-            
-            let storeURL = tempInstallDir.appendingPathComponent(metadata.databaseFileName)
-            
-            try storage.validateStore(at: storeURL)
-            try checkForIDCollisions(with: storeURL)
-            
-            if let existingPack = registry.packs.first(where: { $0.id == metadata.id }) {
-                guard metadata.version > existingPack.metadata.version else {
-                    logger.warning("Skipping install: Pack '\(metadata.title)' version (\(metadata.version)) is not newer than installed version (\(existingPack.metadata.version)).")
-                    return
-                }
-                
-                logger.info("Updating pack '\(metadata.title)' from version \(existingPack.metadata.version) to \(metadata.version)...")
-                let finalDestDir = existingPack.directoryURL
-                let backupDir = storage.stagingDirectoryURL.appendingPathComponent(UUID().uuidString)
+            let (dir, metadata) = try _stageAndValidatePack(from: downloadedURL)
+            stagedDir = dir
+            defer { if let dir = stagedDir { try? FileManager.default.removeItem(at: dir) } }
 
-                do {
-                    try fileManager.moveItem(at: finalDestDir, to: backupDir)
-                    try fileManager.moveItem(at: tempInstallDir, to: finalDestDir)
-                    try? fileManager.removeItem(at: backupDir)
-                } catch {
-                    // If the update fails, try to restore the backup.
-                    try? fileManager.moveItem(at: backupDir, to: finalDestDir)
-                    throw error
-                }
-                
-                let updatedPack = InstalledPack(metadata: metadata, directoryURL: finalDestDir, allowsSave: existingPack.allowsSave)
-                registry.add(updatedPack)
-                
-            } else {
-                let finalDestDir = try storage.getUniquePackDirectoryURL(for: metadata)
-                try fileManager.moveItem(at: tempInstallDir, to: finalDestDir)
-                
-                let newPack = InstalledPack(metadata: metadata, directoryURL: finalDestDir, allowsSave: allowsSave)
-                registry.add(newPack)
+            if let existing = registry.packs.first(where: { $0.id == metadata.id }) {
+                throw PackManagerError.packAlreadyExists(id: existing.id, title: existing.metadata.title)
             }
             
-            // Save changes to the registry and reload containers
+            let finalDestDir = try storage.getUniquePackDirectoryURL(for: metadata)
+            try FileManager.default.moveItem(at: dir, to: finalDestDir)
+            stagedDir = nil
+
+            let newPack = InstalledPack(metadata: metadata, directoryURL: finalDestDir, allowsSave: allowsSave)
+            registry.add(newPack)
             registry.save()
             reloadAllContainers()
-            logger.info("Successfully installed or updated pack: '\(metadata.title)'")
             
+            logger.info("Successfully installed pack: '\(metadata.title)'")
+
         } catch {
             logger.error("installPack failed: \(String(describing: error))")
+        }
+    }
+
+    public func updatePack(from downloadedURL: URL) {
+        var stagedDir: URL?
+        do {
+            let (dir, newMetadata) = try _stageAndValidatePack(from: downloadedURL)
+            stagedDir = dir
+            defer { if let dir = stagedDir { try? FileManager.default.removeItem(at: dir) } }
+
+            guard let existingPack = registry.packs.first(where: { $0.id == newMetadata.id }) else {
+                throw PackManagerError.packToUpdateNotFound(id: newMetadata.id)
+            }
+
+            guard newMetadata.version > existingPack.metadata.version else {
+                logger.warning("Skipping update: Pack '\(newMetadata.title)' version (\(newMetadata.version)) is not newer than installed version (\(existingPack.metadata.version)).")
+                return
+            }
+
+            logger.info("Updating pack '\(newMetadata.title)' from version \(existingPack.metadata.version) to \(newMetadata.version)...")
+            
+            let finalDestDir = existingPack.directoryURL
+            let backupDir = storage.stagingDirectoryURL.appendingPathComponent(UUID().uuidString)
+            let fm = FileManager.default
+
+            do {
+                try fm.moveItem(at: finalDestDir, to: backupDir)
+                try fm.moveItem(at: dir, to: finalDestDir)
+                stagedDir = nil
+                try? fm.removeItem(at: backupDir)
+            } catch {
+                if fm.fileExists(atPath: backupDir.path) && !fm.fileExists(atPath: finalDestDir.path) {
+                    try? fm.moveItem(at: backupDir, to: finalDestDir)
+                }
+                throw error
+            }
+
+            let updatedPack = InstalledPack(metadata: newMetadata, directoryURL: finalDestDir, allowsSave: existingPack.allowsSave)
+            registry.add(updatedPack)
+            registry.save()
+            reloadAllContainers()
+            
+            logger.info("Successfully updated pack: '\(newMetadata.title)'")
+
+        } catch {
+            logger.error("updatePack failed: \(String(describing: error))")
         }
     }
     
@@ -205,45 +201,9 @@ public final class SwiftDataPackManager {
         registry.save()
         
         PendingDeletionsManager.add(id: id, storage: self.storage)
+        reloadAllContainers()
         
-        let userURL = Self.primaryStoreURL(for: Self.mainStoreName, storage: self.storage)
-        let newUserCfg = ModelConfiguration(Self.mainStoreName, schema: schema, url: userURL, allowsSave: true)
-        
-        let newPackCfgs = registry.packs.map {
-            ModelConfiguration($0.id.uuidString, schema: schema, url: $0.storeURL, allowsSave: $0.allowsSave)
-        }
-        
-        hotSwapContainers(newUserConfig: newUserCfg, newPackConfigs: newPackCfgs)
         logger.info("Marked pack '\(removed.metadata.title)' for deletion on next app launch.")
-    }
-    
-    @MainActor
-    private func hotSwapContainers(newUserConfig: ModelConfiguration, newPackConfigs: [ModelConfiguration], afterSwap fileOperation: (() -> Void)? = nil) {
-        do {
-            let newMain  = try ModelContainer(for: schema, configurations: [newUserConfig] + newPackConfigs)
-            
-            withoutAnimation {
-                self.mainContainer = newMain
-            }
-            
-            fileOperation?()
-        } catch {
-            logger.critical("Hot swap failed: \(error.localizedDescription)")
-        }
-    }
-    
-    @MainActor
-    private func withoutAnimation(_ body: () -> Void) {
-        #if canImport(UIKit)
-        UIView.performWithoutAnimation(body)
-        #elseif canImport(AppKit)
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0
-            body()
-        }
-        #else
-        body()
-        #endif
     }
     
     public func addMockPack(title: String, readOnly: Bool = true, seed: (ModelContext) throws -> Void) {
@@ -271,34 +231,6 @@ public final class SwiftDataPackManager {
         }
     }
     
-    // MARK: - Build Logic
-    
-    private static func buildMainContainer(schema: Schema, mainStoreURL: URL, mainStoreName: String, packs: [InstalledPack]) throws -> ModelContainer {
-        let userConfig = ModelConfiguration(mainStoreName, schema: schema, url: mainStoreURL, allowsSave: true)
-        
-        var validPackConfigs: [ModelConfiguration] = []
-        var excludedPacks: [InstalledPack] = []
-        for p in packs {
-            let cfg = ModelConfiguration(p.id.uuidString, schema: schema, url: p.storeURL, allowsSave: p.allowsSave)
-            do {
-                _ = try ModelContainer(for: schema, configurations: [cfg])
-                validPackConfigs.append(cfg)
-            } catch {
-                logger.warning("Excluding pack '\(p.metadata.title)' due to load error: \(error.localizedDescription)")
-                excludedPacks.append(p)
-            }
-        }
-        
-        let mainContainer = try ModelContainer(for: schema, configurations: [userConfig] + validPackConfigs)
-        
-        if !excludedPacks.isEmpty {
-            let titles = excludedPacks.map { $0.metadata.title }.joined(separator: ", ")
-            logger.warning("Excluded packs during container build: \(titles)")
-        }
-        
-        return mainContainer
-    }
-    
     // MARK: - Utilities & Helpers
     
     public func packDirectoryDocument(for id: UUID) throws -> (PackDirectoryDocument, String) {
@@ -311,7 +243,6 @@ public final class SwiftDataPackManager {
     #if DEBUG
     public func exportMainStoreAsPack(title: String, version: Int) throws -> (PackDirectoryDocument, String) {
         let mainStoreURL = Self.primaryStoreURL(for: Self.mainStoreName, storage: self.storage)
-        
         let newPackMetadata = Pack(id: UUID(), title: title, version: version, databaseFileName: mainStoreURL.lastPathComponent)
         
         logger.info("DEBUG: Exporting main store as pack '\(title)' v\(version)")
@@ -332,12 +263,7 @@ public final class SwiftDataPackManager {
             let canonicalUserStoreURL = Self.primaryStoreURL(for: Self.mainStoreName, storage: self.storage)
             try Self.ensureStoreExists(at: canonicalUserStoreURL, schema: schema)
             
-            let newUserCfg = ModelConfiguration(Self.mainStoreName, schema: schema, url: canonicalUserStoreURL, allowsSave: true)
-            let packCfgs = registry.packs.map {
-                ModelConfiguration($0.id.uuidString, schema: schema, url: $0.storeURL, allowsSave: $0.allowsSave)
-            }
-            
-            hotSwapContainers(newUserConfig: newUserCfg, newPackConfigs: packCfgs)
+            reloadAllContainers()
             
             logger.info("DEBUG: User store has been reset. Old data will be purged on next launch.")
             
@@ -350,31 +276,79 @@ public final class SwiftDataPackManager {
     }
     #endif
     
-    // MARK: - Container Reloading
+    // MARK: - Container Management & Reloading
     
     private func reloadAllContainers() {
         do {
-            self.mainContainer = try Self.buildMainContainer(
-                schema: schema,
-                mainStoreURL: currentUserStoreURL,
-                mainStoreName: Self.mainStoreName,
-                packs: registry.packs
-            )
+            let newMainContainer = try self.containerProvider.buildMainContainer(for: registry.packs)
+            withoutAnimation {
+                self.mainContainer = newMainContainer
+            }
         } catch {
             logger.critical("CRITICAL: reloadAllContainers failed: \(error.localizedDescription). App may be in an inconsistent state.")
         }
     }
     
     public func configuration(for source: ContainerSource) -> ModelConfiguration? {
-        switch source {
-        case .mainStore:
-            return ModelConfiguration(Self.mainStoreName, schema: schema, url: currentUserStoreURL, allowsSave: true)
-        case .pack(let id):
-            guard let pack = registry.packs.first(where: { $0.id == id }) else {
-                logger.error("Configuration request failed: No pack found with ID \(id)")
-                return nil
+        return containerProvider.configuration(for: source, allPacks: registry.packs)
+    }
+    
+    @MainActor
+    private func withoutAnimation(_ body: () -> Void) {
+        #if canImport(UIKit)
+        UIView.performWithoutAnimation(body)
+        #elseif canImport(AppKit)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0
+            body()
+        }
+        #else
+        body()
+        #endif
+    }
+    
+    // MARK: - Private Helpers
+    
+    private func _stageAndValidatePack(from downloadedURL: URL) throws -> (stagedDir: URL, metadata: Pack) {
+        let needsSecurityScopedAccess = downloadedURL.startAccessingSecurityScopedResource()
+        defer {
+            if needsSecurityScopedAccess {
+                downloadedURL.stopAccessingSecurityScopedResource()
             }
-            return ModelConfiguration(pack.id.uuidString, schema: schema, url: pack.storeURL, allowsSave: pack.allowsSave)
+        }
+        
+        let tempInstallDir = storage.stagingDirectoryURL.appendingPathComponent(UUID().uuidString)
+        
+        do {
+            let fm = FileManager.default
+            try fm.createDirectory(at: tempInstallDir, withIntermediateDirectories: true)
+            
+            let contents = try fm.contentsOfDirectory(at: downloadedURL, includingPropertiesForKeys: nil)
+            for itemURL in contents {
+                try fm.copyItem(at: itemURL, to: tempInstallDir.appendingPathComponent(itemURL.lastPathComponent))
+            }
+            
+            let manifestURL = tempInstallDir.appendingPathComponent("manifest.json")
+            guard fm.fileExists(atPath: manifestURL.path) else {
+                throw PackManagerError.installationFailed(reason: "Manifest file (manifest.json) not found.")
+            }
+            
+            let manifestData = try Data(contentsOf: manifestURL)
+            let metadata = try JSONDecoder().decode(Pack.self, from: manifestData)
+            
+            let storeURL = tempInstallDir.appendingPathComponent(metadata.databaseFileName)
+            guard fm.fileExists(atPath: storeURL.path) else {
+                throw PackManagerError.installationFailed(reason: "Database file '\(metadata.databaseFileName)' not found in pack.")
+            }
+            
+            try storage.validateStore(at: storeURL)
+            try checkForIDCollisions(with: storeURL)
+            
+            return (tempInstallDir, metadata)
+            
+        } catch {
+            try? FileManager.default.removeItem(at: tempInstallDir)
+            throw error
         }
     }
     
@@ -394,13 +368,12 @@ public final class SwiftDataPackManager {
         try ModelContext(tempContainer).save()
     }
     
-    // MARK: - Private Helpers
-    
     private func checkForIDCollisions(with incomingStoreURL: URL) throws {
         logger.info("Performing ID collision check...")
         
+        // FIX: Safely unwrap the optional configuration.
         guard let userConfig = configuration(for: .mainStore) else {
-            throw PackManagerError.buildError("Could not create configuration for user store.")
+            throw PackManagerError.buildError("Could not get user store configuration for collision check.")
         }
         let tempUserContainer = try ModelContainer(for: schema, configurations: [userConfig])
         let userModelIDs = try getAllPersistentIDs(from: tempUserContainer)

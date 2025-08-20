@@ -22,7 +22,7 @@ private enum ContainerLoadState {
     case failed(source: ContainerSource, error: Error)
 
     struct PackNotFoundError: LocalizedError {
-        var errorDescription: String? = "The pack's data files could not be found on disk."
+        var errorDescription: String? = "The pack could not be found. It may have been deleted or moved."
     }
 }
 
@@ -37,9 +37,11 @@ public struct FilterContainerModifier: ViewModifier {
             return .unavailable
         }
 
+        // Handle single source case separately for more specific error reporting
         if sources.count == 1 {
             let source = sources[0]
             
+            // This 'guard let' will now compile correctly
             guard let config = manager.configuration(for: source) else {
                 return .failed(source: source, error: ContainerLoadState.PackNotFoundError())
             }
@@ -52,18 +54,28 @@ public struct FilterContainerModifier: ViewModifier {
             }
         }
 
+        // Optimization for showing all sources
         var allPossibleSources: [ContainerSource] = [.mainStore]
         allPossibleSources.append(contentsOf: manager.installedPacks.map { .pack(id: $0.id) })
         if Set(sources) == Set(allPossibleSources) {
             return .available(manager.mainContainer)
         }
 
+        // Handle multi-source case
         let configurations = sources.compactMap { manager.configuration(for: $0) }
+        
+        if configurations.count != sources.count {
+            if let missingSource = sources.first(where: { manager.configuration(for: $0) == nil }) {
+                 return .failed(source: missingSource, error: ContainerLoadState.PackNotFoundError())
+            }
+        }
+        
         guard !configurations.isEmpty else { return .unavailable }
         
-        if let container = try? ModelContainer(for: manager.schema, configurations: configurations) {
+        do {
+            let container = try ModelContainer(for: manager.schema, configurations: configurations)
             return .available(container)
-        } else {
+        } catch {
             return .failed(source: .mainStore, error: PackManagerError.buildError("One or more data sources could not be loaded."))
         }
     }
@@ -115,7 +127,11 @@ public struct FilterContainerModifier: ViewModifier {
         #if os(macOS)
         NSWorkspace.shared.open(url)
         #elseif os(iOS)
+        #if targetEnvironment(macCatalyst)
+        NSWorkspace.shared.open(url)
+        #else
         UIApplication.shared.open(url)
+        #endif
         #else
         print("Packs directory location: \(url.path)")
         #endif

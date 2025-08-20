@@ -38,7 +38,6 @@ public final class SwiftDataPackManager {
     
     let schema: Schema
     let rootURL: URL
-    private let modelTypes: [any PersistentModel.Type]
     private let storage: PackStorageManager
     private let registry: PackRegistry
     private let containerProvider: ModelContainerProvider
@@ -69,7 +68,6 @@ public final class SwiftDataPackManager {
         _ = LifecycleObserver.shared
         
         self.schema = Schema(models)
-        self.modelTypes = models
         
         let fm = FileManager.default
         guard let rootURL = Self.getRootURL() else {
@@ -109,7 +107,7 @@ public final class SwiftDataPackManager {
     // MARK: - Public Write API
     
     public func performWrite(_ block: (ModelContext) throws -> Void) throws {
-        // FIX: Safely unwrap the optional configuration.
+        // Safely unwrap the optional configuration.
         guard let userConfig = configuration(for: .mainStore) else {
             throw PackManagerError.buildError("Could not create configuration for the main user store.")
         }
@@ -132,6 +130,12 @@ public final class SwiftDataPackManager {
 
             if let existing = registry.packs.first(where: { $0.id == metadata.id }) {
                 throw PackManagerError.packAlreadyExists(id: existing.id, title: existing.metadata.title)
+            }
+            
+            // Preflight: ensure the staged pack can be mounted alongside current stores.
+            let stagedStoreURL = dir.appendingPathComponent(metadata.databaseFileName)
+            guard canMountWithExistingStores(packStoreURL: stagedStoreURL, allowsSave: allowsSave) else {
+                throw PackManagerError.installationFailed(reason: "Pack database is incompatible with the current stores.")
             }
             
             let finalDestDir = try storage.getUniquePackDirectoryURL(for: metadata)
@@ -167,6 +171,12 @@ public final class SwiftDataPackManager {
             }
 
             logger.info("Updating pack '\(newMetadata.title)' from version \(existingPack.metadata.version) to \(newMetadata.version)...")
+            
+            // Preflight: ensure the staged pack can be mounted alongside current stores.
+            let stagedStoreURL = dir.appendingPathComponent(newMetadata.databaseFileName)
+            guard canMountWithExistingStores(packStoreURL: stagedStoreURL, allowsSave: existingPack.allowsSave) else {
+                throw PackManagerError.installationFailed(reason: "Pack database is incompatible with the current stores.")
+            }
             
             let finalDestDir = existingPack.directoryURL
             let backupDir = storage.stagingDirectoryURL.appendingPathComponent(UUID().uuidString)
@@ -341,8 +351,8 @@ public final class SwiftDataPackManager {
                 throw PackManagerError.installationFailed(reason: "Database file '\(metadata.databaseFileName)' not found in pack.")
             }
             
+            // Ensure the staged store is at least individually openable.
             try storage.validateStore(at: storeURL)
-            try checkForIDCollisions(with: storeURL)
             
             return (tempInstallDir, metadata)
             
@@ -368,57 +378,23 @@ public final class SwiftDataPackManager {
         try ModelContext(tempContainer).save()
     }
     
-    private func checkForIDCollisions(with incomingStoreURL: URL) throws {
-        logger.info("Performing ID collision check...")
+    /// Attempts to build a temporary container with the current user store + existing packs + a staged pack.
+    /// Returns true if the composite container can be created (i.e., schemas are compatible).
+    private func canMountWithExistingStores(packStoreURL: URL, allowsSave: Bool) -> Bool {
+        guard let userCfg = configuration(for: .mainStore) else { return false }
         
-        // FIX: Safely unwrap the optional configuration.
-        guard let userConfig = configuration(for: .mainStore) else {
-            throw PackManagerError.buildError("Could not get user store configuration for collision check.")
+        var configs: [ModelConfiguration] = [userCfg]
+        configs.append(contentsOf: installedPacks.compactMap { configuration(for: .pack(id: $0.id)) })
+        
+        let preflightCfg = ModelConfiguration("preflight-\(UUID().uuidString)", schema: schema, url: packStoreURL, allowsSave: allowsSave)
+        configs.append(preflightCfg)
+        
+        do {
+            _ = try ModelContainer(for: schema, configurations: configs)
+            return true
+        } catch {
+            logger.warning("Preflight mount failed: \(error.localizedDescription)")
+            return false
         }
-        let tempUserContainer = try ModelContainer(for: schema, configurations: [userConfig])
-        let userModelIDs = try getAllPersistentIDs(from: tempUserContainer)
-        
-        guard !userModelIDs.isEmpty else {
-            logger.info("User library is empty, no collisions possible. Skipping check.")
-            return
-        }
-        
-        let incomingConfig = ModelConfiguration("collision-check-\(UUID().uuidString)", schema: schema, url: incomingStoreURL, allowsSave: false)
-        let incomingContainer = try ModelContainer(for: schema, configurations: [incomingConfig])
-        let incomingModelIDs = try getAllPersistentIDs(from: incomingContainer)
-        
-        if !userModelIDs.isDisjoint(with: incomingModelIDs) {
-            let collision = userModelIDs.first { incomingModelIDs.contains($0) }!
-            logger.error("ID Collision Detected: An item with ID '\(String(describing: collision))' from entity '\(collision.entityName)' exists in both the user library and the pack.")
-            throw PackManagerError.idCollisionDetected
-        }
-        
-        logger.info("Collision check passed successfully.")
-    }
-    
-    private func getAllPersistentIDs(from container: ModelContainer) throws -> Set<PersistentIdentifier> {
-        var allIDs = Set<PersistentIdentifier>()
-        let context = ModelContext(container)
-        
-        for modelType in modelTypes {
-            let ids = try modelType._fetchAllIDs(from: context)
-            allIDs.formUnion(ids)
-        }
-        return allIDs
-    }
-}
-
-// MARK: - PersistentModel Helper Extension
-fileprivate extension PersistentModel {
-    static func _fetchAllIDs(from context: ModelContext) throws -> [PersistentIdentifier] {
-        var ids: [PersistentIdentifier] = []
-        let batchSize = 500
-        
-        let descriptor = FetchDescriptor<Self>()
-        try context.enumerate(descriptor, batchSize: batchSize) { model in
-            ids.append(model.persistentModelID)
-        }
-        
-        return ids
     }
 }

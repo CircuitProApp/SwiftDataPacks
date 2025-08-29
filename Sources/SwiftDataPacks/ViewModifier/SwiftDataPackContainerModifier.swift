@@ -22,6 +22,12 @@ public struct SwiftDataPackContainerModifier: ViewModifier {
             _result = State(wrappedValue: .failure(error))
         }
     }
+    
+    public init(manager: SwiftDataPackManager, defaultSources: [ContainerSource]?) {
+        self.defaultSources = defaultSources
+        // It doesn't need to do any work, just store the successful result.
+        _result = State(wrappedValue: .success(manager))
+    }
 
     public func body(content: Content) -> some View {
         switch result {
@@ -52,5 +58,14 @@ public extension View {
         defaultFilter sources: [ContainerSource]? = nil
     ) -> some View {
         self.modifier(SwiftDataPackContainerModifier(models: models, defaultSources: sources))
+    }
+}
+
+public extension View {
+    func packContainer(
+        _ manager: SwiftDataPackManager,
+        defaultFilter sources: [ContainerSource]? = nil
+    ) -> some View {
+        self.modifier(SwiftDataPackContainerModifier(manager: manager, defaultSources: sources))
     }
 }
